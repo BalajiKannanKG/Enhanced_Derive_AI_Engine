@@ -1,0 +1,1543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Actionable Trading Agent - VIX 25 & MT5 MetaAPI Mode</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --card-bg: #131b2e;
+            --accent-cyan: #06b6d4;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --accent-yellow: #f59e0b;
+            --accent-purple: #a855f7;
+            --accent-pink: #ec4899;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --border-color: #1e293b;
+        }
+
+        [data-theme="light"] {
+            --bg-color: #f1f5f9;
+            --card-bg: #ffffff;
+            --accent-cyan: #0284c7;
+            --accent-green: #059669;
+            --accent-red: #dc2626;
+            --accent-yellow: #d97706;
+            --accent-purple: #7c3aed;
+            --accent-pink: #db2777;
+            --text-main: #0f172a;
+            --text-muted: #64748b;
+            --border-color: #cbd5e1;
+        }
+
+        html, body { height: 100vh; max-height: 100vh; margin: 0; padding: 4px; overflow: hidden; background-color: var(--bg-color); color: var(--text-main); font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; box-sizing: border-box; transition: background 0.3s, color 0.3s; }
+        
+        header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 2px; margin-bottom: 3px; height: 24px; }
+        h1 { margin: 0; font-size: 0.8rem; color: var(--accent-cyan); display: flex; align-items: center; gap: 8px; }
+        .badge { background: var(--card-bg); border: 1px solid var(--border-color); padding: 1px 4px; border-radius: 4px; font-size: 0.58rem; color: var(--text-main); }
+        .live-price-tag { background: rgba(6, 182, 212, 0.15); border: 1px solid var(--accent-cyan); color: var(--accent-cyan); padding: 1px 5px; border-radius: 4px; font-weight: bold; font-size: 0.65rem; }
+        .countdown-badge-lg { background: rgba(245, 158, 11, 0.2); border: 1px solid var(--accent-yellow); color: var(--accent-yellow); padding: 1px 6px; border-radius: 4px; font-weight: bold; font-size: 0.7rem; letter-spacing: 0.5px; }
+
+        /* Timeframe Hyperlink Tabs */
+        .tf-links-container { display: flex; gap: 3px; align-items: center; }
+        .tf-link { background: var(--card-bg); border: 1px solid var(--border-color); color: var(--text-muted); padding: 1px 5px; border-radius: 3px; font-size: 0.58rem; font-weight: bold; text-decoration: none; cursor: pointer; transition: all 0.2s; }
+        .tf-link:hover { border-color: var(--accent-cyan); color: var(--accent-cyan); }
+        .tf-link.active { background: rgba(6, 182, 212, 0.15); border-color: var(--accent-cyan); color: var(--accent-cyan); }
+
+        /* Blinking Animation for Alerts */
+        @keyframes blink-animation {
+            0% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.3; transform: scale(1.02); }
+            100% { opacity: 1; transform: scale(1); }
+        }
+        .blinking-alert {
+            animation: blink-animation 1s infinite ease-in-out;
+            display: block;
+        }
+
+        .macro-bar { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; margin-bottom: 3px; }
+        .matrix-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 3px; padding: 2px 3px; text-align: center; display: flex; flex-direction: column; gap: 1px; }
+        .matrix-title { font-size: 0.55rem; color: var(--text-muted); font-weight: bold; text-transform: uppercase; }
+        .matrix-status { font-size: 0.58rem; font-weight: bold; padding: 1px; border-radius: 2px; }
+        .status-bullish { background: rgba(16, 185, 129, 0.2); color: var(--accent-green); }
+        .status-bearish { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); }
+        .matrix-timer { font-size: 0.58rem; font-weight: bold; color: var(--accent-yellow); background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 2px; padding: 1px; font-family: monospace; }
+
+        .top-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 3px; margin-bottom: 3px; }
+        
+        .dashboard-grid { display: grid; grid-template-columns: 1.35fr 0.85fr; gap: 4px; height: calc(100vh - 150px); }
+        .right-column { display: flex; flex-direction: column; gap: 3px; height: 100%; overflow: hidden; }
+
+        /* Confluence Table Styles */
+        .confluence-side-box { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 2px; }
+        .confluence-card-sm { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 4px; padding: 4px 6px; }
+        .confluence-card-sm h4 { margin: 0 0 3px 0; font-size: 0.7rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 2px; }
+        .confluence-item { display: flex; justify-content: space-between; align-items: center; font-size: 0.65rem; margin: 2px 0; padding: 2px 3px; border-radius: 2px; background: rgba(0,0,0,0.02); font-weight: 500; }
+        .status-light { font-size: 0.62rem; font-weight: bold; padding: 1px 4px; border-radius: 2px; display: inline-flex; align-items: center; gap: 2px; }
+        .light-green { background: rgba(16, 185, 129, 0.2); color: var(--accent-green); border: 1px solid var(--accent-green); }
+        .light-red { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); border: 1px solid var(--accent-red); }
+
+        .trade-exec-card { background: linear-gradient(135deg, rgba(16, 185, 129, 0.08), var(--card-bg)); border: 1px solid var(--accent-green); border-radius: 4px; padding: 4px 6px; margin-top: 2px; }
+        .exec-row { display: flex; justify-content: space-between; font-size: 0.62rem; margin: 1px 0; }
+        .exec-val { font-weight: bold; }
+        .btn-trade-confirm { width: 100%; padding: 4px; font-size: 0.68rem; font-weight: bold; border-radius: 3px; border: none; cursor: pointer; color: white; background: var(--accent-green); margin-top: 2px; transition: opacity 0.2s; }
+        .btn-trade-confirm:disabled { opacity: 0.4; cursor: not-allowed; background: var(--text-muted); }
+
+        .card { background-color: var(--card-bg); border: 1px solid var(--border-color); border-radius: 5px; padding: 4px 6px; display: flex; flex-direction: column; transition: background 0.3s, border 0.3s; box-sizing: border-box; }
+        .card h3 { margin: 0 0 2px 0; font-size: 0.65rem; color: var(--accent-cyan); border-bottom: 1px solid var(--border-color); padding-bottom: 2px; display: flex; justify-content: space-between; align-items: center; }
+        
+        .metric-row { display: flex; justify-content: space-between; margin: 1px 0; font-size: 0.62rem; color: var(--text-main); }
+        .metric-value { font-weight: bold; }
+        .bullish { color: var(--accent-green); }
+        .bearish { color: var(--accent-red); }
+
+        .controls-row { display: flex; gap: 3px; margin-top: 1px; }
+        .btn { flex: 1; padding: 2px; font-size: 0.58rem; font-weight: bold; border-radius: 3px; border: none; cursor: pointer; color: white; }
+        .btn-start { background: var(--accent-green); }
+        .btn-pause { background: var(--accent-yellow); color: #0f172a; }
+        .btn-stop { background: var(--accent-red); }
+        .btn-tool { background: var(--card-bg); border: 1px solid var(--accent-cyan); color: var(--accent-cyan); padding: 1px 5px; border-radius: 3px; font-size: 0.58rem; cursor: pointer; font-weight: bold; }
+        .btn-tool:hover { background: rgba(6, 182, 212, 0.15); }
+
+        .signal-box { text-align: center; padding: 2px; border-radius: 3px; font-size: 0.65rem; font-weight: bold; margin-top: 2px; }
+        .signal-buy { background: rgba(16, 185, 129, 0.2); color: var(--accent-green); border: 1px solid var(--accent-green); }
+        .signal-sell { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); border: 1px solid var(--accent-red); }
+        .signal-hold { background: rgba(148, 163, 184, 0.1); color: var(--text-muted); border: 1px solid var(--border-color); }
+
+        /* Calculator Styles */
+        .calc-input { width: 70px; background: var(--bg-color); color: var(--accent-cyan); border: 1px solid var(--border-color); border-radius: 3px; font-size: 0.6rem; font-weight: bold; padding: 1px 3px; text-align: right; }
+        .calc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; margin-top: 2px; font-size: 0.58rem; }
+        .calc-card { background: rgba(0,0,0,0.03); border: 1px solid var(--border-color); padding: 2px 4px; border-radius: 3px; }
+
+        .chart-box { flex: 1; position: relative; min-height: 40px; margin-top: 1px; }
+
+        .prediction-panel { background: linear-gradient(135deg, rgba(6, 182, 212, 0.08), var(--card-bg)); border: 1px solid var(--accent-cyan); }
+        .sr-alert-pill { background: rgba(245, 158, 11, 0.15); border: 1px solid var(--accent-yellow); color: var(--accent-yellow); padding: 1px 5px; border-radius: 3px; font-weight: bold; font-size: 0.6rem; text-align: center; margin-bottom: 2px; }
+        .forecast-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; margin-top: 1px; }
+        .forecast-box { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 3px; padding: 2px; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: space-between; }
+        .forecast-step { font-size: 0.52rem; color: var(--text-muted); text-transform: uppercase; font-weight: bold; }
+        .forecast-pattern { font-size: 0.55rem; font-weight: bold; margin-top: 1px; line-height: 1.1; }
+
+        .theme-btn { background: none; border: 1px solid var(--border-color); color: var(--text-main); padding: 1px 5px; border-radius: 3px; cursor: pointer; font-size: 0.6rem; font-weight: bold; }
+    </style>
+</head>
+<body data-theme="light">
+
+    <header>
+        <h1>🎯 AI Executive Trading Room <span id="livePriceDisplay" class="live-price-tag">R_25: ---</span></h1>
+        <div style="display: flex; align-items: center; gap: 6px;">
+            <button class="theme-btn" onclick="toggleTheme()" id="themeToggleBtn">☀️ Light</button>
+            <div class="badge" id="last-update">Syncing...</div>
+        </div>
+    </header>
+
+    <!-- Multi-TF Matrix Bar -->
+    <div class="macro-bar">
+        <div class="matrix-card"><span class="matrix-title">3m</span><span id="matrix-status-3m" class="matrix-status status-flat">---</span><span id="matrix-timer-3m" class="matrix-timer">00:00</span></div>
+        <div class="matrix-card"><span class="matrix-title">5m</span><span id="matrix-status-5m" class="matrix-status status-flat">---</span><span id="matrix-timer-5m" class="matrix-timer">00:00</span></div>
+        <div class="matrix-card"><span class="matrix-title">15m</span><span id="matrix-status-15m" class="matrix-status status-flat">---</span><span id="matrix-timer-15m" class="matrix-timer">00:00</span></div>
+        <div class="matrix-card"><span class="matrix-title">30m</span><span id="matrix-status-30m" class="matrix-status status-flat">---</span><span id="matrix-timer-30m" class="matrix-timer">00:00</span></div>
+        <div class="matrix-card"><span class="matrix-title">H1</span><span id="matrix-status-h1" class="matrix-status status-flat">---</span><span id="matrix-timer-h1" class="matrix-timer">00:00</span></div>
+        <div class="matrix-card"><span class="matrix-title">H4</span><span id="matrix-status-h4" class="matrix-status status-flat">---</span><span id="matrix-timer-h4" class="matrix-timer">00:00</span></div>
+        <div class="matrix-card"><span class="matrix-title">D1</span><span id="matrix-status-d1" class="matrix-status status-flat">---</span><span id="matrix-timer-d1" class="matrix-timer">00:00</span></div>
+    </div>
+
+    <!-- Top Status Bar with MetaAPI / MT5 Integration Card -->
+    <div class="top-grid">
+        <div class="card" style="padding: 3px 5px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size:0.6rem; font-weight:bold; color:var(--accent-cyan);">Agent Status:</span>
+                <span id="agentStatusBadge" class="badge" style="color:var(--accent-green);">RUNNING</span>
+            </div>
+            <div class="controls-row">
+                <button class="btn btn-start" onclick="sendControl('START')">▶ START</button>
+                <button class="btn btn-pause" onclick="sendControl('PAUSE')">⏸ PAUSE</button>
+                <button class="btn btn-stop" onclick="sendControl('STOP')">⏹ STOP</button>
+            </div>
+            <div class="signal-box signal-hold" id="val-signal">HOLD / SCANNING</div>
+        </div>
+
+        <div class="card" style="padding: 3px 5px;">
+            <h3 style="margin-bottom:1px;">📍 Daily CPR & <span id="vcpr-badge" style="color:var(--accent-yellow);">vCPR: ---</span></h3>
+            <div class="metric-row"><span>R3 / S3:</span> <span class="metric-value"><span id="cpr-r3">---</span> / <span id="cpr-s3">---</span></span></div>
+            <div class="metric-row"><span>R1 / S1:</span> <span class="metric-value"><span id="cpr-r1">---</span> / <span id="cpr-s1">---</span></span></div>
+            <div class="metric-row"><span>TC / P / BC:</span> <span class="metric-value" style="color:var(--accent-cyan);" id="cpr-zones">---</span></div>
+        </div>
+
+        <!-- MetaAPI MT5 Real-time Account Telemetry -->
+        <div class="card" style="padding: 3px 5px; border-color: var(--accent-cyan);">
+            <h3 style="margin-bottom:1px;">
+                <span>🔗 MT5 Live Bridge</span>
+                <span id="mt5-status-badge" class="badge" style="color:var(--accent-green);">CONNECTED</span>
+            </h3>
+            <div class="metric-row"><span>Balance / Equity:</span> <span class="metric-value"><span id="mt5-balance">$0.00</span> / <span id="mt5-equity" style="color:var(--accent-cyan);">$0.00</span></span></div>
+            <div class="metric-row"><span>Open Pos / Floating P/L:</span> <span class="metric-value"><span id="mt5-open-pos">0 Trades</span> / <span id="mt5-floating-pnl" style="color:var(--accent-green);">$0.00</span></span></div>
+            <div class="metric-row"><span>Today's Realized P/L:</span> <span class="metric-value" id="mt5-today-pnl" style="color:var(--accent-green); font-weight:bold;">+$0.00</span></div>
+        </div>
+    </div>
+
+    <div class="dashboard-grid">
+        <!-- Left Column: Main Price & Indicator Charts -->
+        <div class="card" style="height: 100%;">
+            <h3>
+                <span>📊 Price Chart & Interactive Drawing</span>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <!-- Timeframe Hyperlink Selector -->
+                    <div class="tf-links-container" id="tfLinksContainer">
+                        <a class="tf-link" onclick="setSelectedItem('3m')">3m</a>
+                        <a class="tf-link active" onclick="setSelectedItem('5m')">5m</a>
+                        <a class="tf-link" onclick="setSelectedItem('15m')">15m</a>
+                        <a class="tf-link" onclick="setSelectedItem('30m')">30m</a>
+                        <a class="tf-link" onclick="setSelectedItem('H1')">H1</a>
+                        <a class="tf-link" onclick="setSelectedItem('H4')">H4</a>
+                        <a class="tf-link" onclick="setSelectedItem('D1')">D1</a>
+                    </div>
+                    <button class="btn-tool" onclick="clearDrawnLines()">🗑️ Clear Lines</button>
+                    <span id="candleCountdown" class="countdown-badge-lg">⏳ 00:00</span>
+                </div>
+            </h3>
+            
+            <div style="display: grid; grid-template-columns: 1fr; gap: 2px;">
+                <div>
+                    <div class="metric-row"><span>Trend:</span> <span class="metric-value" id="tf-trend">---</span></div>
+                    <div class="metric-row"><span>EMA 20/50/200:</span> <span class="metric-value" id="tf-ema" style="font-size:0.52rem;">---</span></div>
+                    <div class="metric-row"><span>RSI(10) / ATR:</span> <span class="metric-value"><span id="tf-rsi">---</span> / <span id="tf-atr">---</span></span></div>
+                    <div class="metric-row"><span>Pressure:</span> <span class="metric-value" id="tf-pressure">---</span></div>
+                </div>
+            </div>
+
+            <div style="font-size: 0.52rem; color: var(--text-muted); margin-top:1px; display:flex; gap:6px; flex-wrap:wrap; justify-content:space-between;">
+                <div>
+                    <span style="color:var(--accent-cyan)">● EMA20</span>
+                    <span style="color:var(--accent-yellow)">● EMA50</span>
+                    <span style="color:var(--accent-purple)">● EMA200</span>
+                    <span style="color:#ec4899; font-weight:bold;">--- BB Upper</span>
+                    <span style="color:#8b5cf6; font-weight:bold;">--- BB Lower</span>
+                    <span style="color:#FF8C00; font-weight:bold;">▬ Prev Open/Close</span>
+                </div>
+                <span style="color:var(--accent-yellow); font-weight:bold;">💡 Click chart to add/remove custom line</span>
+            </div>
+            <div class="chart-box" style="flex: 2; min-height: 120px;">
+                <canvas id="priceChart"></canvas>
+            </div>
+
+            <div style="font-size: 0.55rem; color: var(--text-muted); margin-top:2px; display:flex; justify-content:space-between;">
+                <span>RSI (10) [OB: 85 / OS: 15]</span>
+                <span style="color: var(--accent-pink);">Stochastic (%K 16, %D 3)</span>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; flex: 1; min-height: 45px;">
+                <div class="chart-box" style="min-height: 45px;"><canvas id="rsiChart"></canvas></div>
+                <div class="chart-box" style="min-height: 45px;"><canvas id="stochChart"></canvas></div>
+            </div>
+        </div>
+
+        <!-- Right Column: Capital Calculator, Forecast & Confluence Matrix -->
+        <div class="right-column">
+            <!-- VIX 25 SMART CAPITAL & LOT SIZE CALCULATOR (MAX 1000 LOTS) -->
+            <div class="card" style="flex: 1.3; min-height: 0;">
+                <h3>
+                    <span>🧮 VIX 25 Capital & Safe Lot Calculator</span>
+                    <span id="plan-date-tag" class="badge" style="color:var(--accent-yellow);">MT5 Connected</span>
+                </h3>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
+                    <span style="font-size:0.6rem; font-weight:bold;">Available Capital ($):</span>
+                    <input type="number" id="calcCapitalInput" class="calc-input" value="100.00" step="0.01" oninput="window.userManuallyChangedCapital = true; calculatePositionAndMargin()">
+                </div>
+
+                <div class="calc-grid">
+                    <div class="calc-card">
+                        <div style="color:var(--text-muted); font-size:0.5rem;">Margin Needed</div>
+                        <div id="calcMarginRisk" style="font-weight:bold; color:var(--accent-yellow);">$0.35</div>
+                    </div>
+                    <div class="calc-card">
+                        <div style="color:var(--text-muted); font-size:0.5rem;">Smart Lot Size</div>
+                        <div id="calcSafeLot" style="font-weight:bold; color:var(--accent-cyan);">0.50 Lots</div>
+                    </div>
+                    <div class="calc-card">
+                        <div style="color:var(--text-muted); font-size:0.5rem;">Est. Target Profit (3x ATR)</div>
+                        <div id="calcTargetProfit" style="font-weight:bold; color:var(--accent-green);">+$0.00</div>
+                    </div>
+                    <div class="calc-card">
+                        <div style="color:var(--text-muted); font-size:0.5rem;">Est. Max Loss (1.5x ATR)</div>
+                        <div id="calcMaxLoss" style="font-weight:bold; color:var(--accent-red);">- $0.00</div>
+                    </div>
+                </div>
+
+                <div style="margin-top:2px; border-top:1px dashed var(--border-color); padding-top:2px;">
+                    <div class="metric-row"><span>Target Final Balance:</span> <span id="calcFinalProfit" class="metric-value bullish">$130.00</span></div>
+                    <div class="metric-row"><span>Loss Safeguard Balance:</span> <span id="calcFinalLoss" class="metric-value bearish">$85.00</span></div>
+                    <div class="metric-row"><span>Calc Price TP / SL:</span> <span class="metric-value"><span id="calcTpPrice" style="color:var(--accent-green);">---</span> / <span id="calcSlPrice" style="color:var(--accent-red);">---</span></span></div>
+                </div>
+
+                <!-- Prominent Relocated Alerts -->
+                <div style="margin-top:3px; display:grid; grid-template-columns: 1fr; gap:2px;">
+                    <div id="tf-squeeze-state" style="font-size: 0.72rem; font-weight: bold; text-align: center; padding: 2px; border-radius: 3px; background: rgba(245, 158, 11, 0.15); border: 1px solid var(--accent-yellow); color: var(--accent-yellow);">🟡 CONSOLIDATION (Squeeze)</div>
+                    <div id="tf-breakout-alert" style="font-size: 0.72rem; font-weight: bold; text-align: center; padding: 2px; border-radius: 3px; background: rgba(6, 182, 212, 0.15); border: 1px solid var(--accent-cyan); color: var(--accent-cyan);">⚡ STANDBY</div>
+                </div>
+            </div>
+
+            <div class="card prediction-panel" style="flex: 0.95; min-height: 0;">
+                <h3>🔮 S/R Proximity & Open/Close Forecast</h3>
+                <div id="sr-alert-box" class="sr-alert-pill">Scanning S/R...</div>
+                <div class="metric-row"><span>Target:</span> <span class="metric-value" id="pred-target" style="color:var(--accent-cyan);">---</span></div>
+                <div class="metric-row"><span>Distance:</span> <span class="metric-value" id="pred-distance">---</span></div>
+                
+                <div class="forecast-grid" id="forecast-container">
+                    <div class="forecast-box"><div class="forecast-step">T+1</div><canvas width="32" height="22"></canvas><div class="forecast-pattern">Loading...</div></div>
+                    <div class="forecast-box"><div class="forecast-step">T+2</div><canvas width="32" height="22"></canvas><div class="forecast-pattern">Loading...</div></div>
+                    <div class="forecast-box"><div class="forecast-step">T+3</div><canvas width="32" height="22"></canvas><div class="forecast-pattern">Loading...</div></div>
+                </div>
+            </div>
+                    <!-- Decision Audit & Strategy Reasoning Card -->
+                    <div class="card" style="border-color: var(--accent-cyan); flex: 1.2; min-height: 0;">
+                        <h3>🎯 AI Decision Audit & Strategy Matrix</h3>
+                        <div class="metric-row"><span>Market Regime:</span> <span class="metric-value" id="audit-regime" style="color:var(--accent-cyan);">---</span></div>
+                        <div class="metric-row"><span>Consensus Score:</span> <span class="metric-value" id="audit-score">0</span></div>
+                        <div style="font-size: 0.6rem; color: var(--text-muted); margin-top: 3px;">Active Paths:</div>
+                        <div id="audit-paths" style="font-size: 0.62rem; font-weight: bold; color: var(--accent-yellow); min-height: 18px; margin-bottom: 2px;">Scanning active                                 paths...</div>
+                        <div style="font-size: 0.58rem; color: var(--text-muted);">Reasoning:</div>
+                        <div id="audit-reasoning" style="font-size: 0.6rem; background: rgba(0,0,0,0.03); border: 1px solid var(--border-color); padding: 3px; border-radius: 3px;                                  max-height: 35px; overflow-y: auto;">Initializing decision matrix...</div>
+                    </div>
+            <!-- Confluence Matrix & Manual Controls -->
+            <div class="card" style="border-color: var(--accent-purple); flex: 1.35; min-height: 0;">
+                <h3>🚦 Confluence Checklists & Manual Controls</h3>
+                <div class="confluence-side-box">
+                    <!-- BUY Confluences -->
+                    <div class="confluence-card-sm">
+                        <h4 style="color: var(--accent-green);">🟢 BUY Checks</h4>
+                        <div class="confluence-item"><span>1. At Lower BB:</span><span id="c-buy-bb" class="status-light light-red">🔴 PENDING</span></div>
+                        <div class="confluence-item"><span>2. Stoch OS (<25):</span><span id="c-buy-stoch" class="status-light light-red">🔴 PENDING</span></div>
+                        <div class="confluence-item"><span>3. P > EMA20:</span><span id="c-buy-ema" class="status-light light-red">🔴 PENDING</span></div>
+                        <div class="confluence-item"><span>4. S/R Bounce:</span><span id="c-buy-sr" class="status-light light-red">🔴 PENDING</span></div>
+                        <div class="confluence-item"><span>5. Bull Breakout:</span><span id="c-buy-sq" class="status-light light-red">🔴 PENDING</span></div>
+                        <!-- In BUY Confluences Box -->
+                        <div class="confluence-item"><span>6. Key Level Retest:</span><span id="c-buy-retest" class="status-light light-red">🔴 PENDING</span></div>
+                    </div>
+
+                    <!-- SELL Confluences -->
+                    <div class="confluence-card-sm">
+                        <h4 style="color: var(--accent-red);">🔴 SELL Checks</h4>
+                        <div class="confluence-item"><span>1. At Upper BB:</span><span id="c-sell-bb" class="status-light light-red">🔴 PENDING</span></div>
+                        <div class="confluence-item"><span>2. Stoch OB (>75):</span><span id="c-sell-stoch" class="status-light light-red">🔴 PENDING</span></div>
+                        <div class="confluence-item"><span>3. P < EMA20:</span><span id="c-sell-ema" class="status-light light-red">🔴 PENDING</span></div>
+                        <div class="confluence-item"><span>4. S/R Rejection:</span><span id="c-sell-sr" class="status-light light-red">🔴 PENDING</span></div>
+                        <div class="confluence-item"><span>5. Bear Breakout:</span><span id="c-sell-sq" class="status-light light-red">🔴 PENDING</span></div>
+                        <!-- In SELL Confluences Box -->
+                        <div class="confluence-item"><span>6. Key Level Retest:</span><span id="c-sell-retest" class="status-light light-red">🔴 PENDING</span></div>
+                    </div>
+                </div>
+
+                <!-- Automated Trade Execution Bar -->
+                <div class="trade-exec-card">
+                    <div class="exec-row"><span>Suggested:</span><span id="rec-dir" class="exec-val" style="color: var(--accent-yellow);">SCANNING...</span></div>
+                    <div class="exec-row"><span>Entry:</span><span id="rec-entry" class="exec-val">---</span> | <span>TP:</span><span id="rec-tp" class="exec-val" style="color: var(--accent-green);">---</span> | <span>SL:</span><span id="rec-sl" class="exec-val" style="color: var(--accent-red);">---</span></div>
+                    <button id="btnConfirmTrade" class="btn-trade-confirm" onclick="confirmTradeExecution()" disabled>⏳ Awaiting Confluences...</button>
+                </div>
+
+                <!-- Manual Trade Execution Panel -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 3px; margin-top: 3px;">
+                    <button class="btn btn-start" style="padding: 4px; font-size: 0.65rem;" onclick="executeManualTrade('BUY')">🟢 MANUAL BUY</button>
+                    <button class="btn btn-stop" style="padding: 4px; font-size: 0.65rem;" onclick="executeManualTrade('SELL')">🔴 MANUAL SELL</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let globalData = null;
+        let priceChartInstance = null;
+        let rsiChartInstance = null;
+        let stochChartInstance = null;
+        let activeSrTargetVal = 0;
+        let currentLivePrice = 0;
+        let selectedTimeframe = '5m';
+        let candleIntervalSeconds = 300;
+        
+        let drawnHorizontalLines = [];
+
+        const tfIntervals = {
+            '3m': 180,
+            '5m': 300,
+            '15m': 900,
+            '30m': 1800,
+            'h1': 3600,
+            'h4': 14400,
+            'd1': 86400
+        };
+
+        function calculatePositionAndMargin() {
+            const inputCapital = parseFloat(document.getElementById('calcCapitalInput').value) || 100.0;
+            
+            const liveMinLot = (globalData && globalData.vix25_specs && globalData.vix25_specs.min_lot) ? globalData.vix25_specs.min_lot : 0.50;
+            const liveMarginPerMin = (globalData && globalData.vix25_specs && globalData.vix25_specs.margin_per_min_lot) ? globalData.vix25_specs.margin_per_min_lot : 0.35;
+            const maxAllowedLots = 200.00; // Single trade cap
+            const lotStep = 0.50;
+
+            let calculatedLots = liveMinLot * (inputCapital / 100.0);
+            calculatedLots = Math.max(liveMinLot, Math.min(maxAllowedLots, calculatedLots));
+
+            let safeLot = Math.round(calculatedLots / lotStep) * lotStep;
+            safeLot = Math.max(liveMinLot, Math.min(maxAllowedLots, safeLot));
+
+            let requiredMargin = (safeLot / liveMinLot) * liveMarginPerMin;
+
+            const marginEl = document.getElementById('calcMarginRisk');
+            marginEl.innerText = `$${requiredMargin.getvalue ? requiredMargin.toFixed(2) : requiredMargin.toFixed(2)} (Min: ${liveMinLot})`;
+            
+            if (inputCapital < requiredMargin) {
+                marginEl.style.color = 'var(--accent-red)';
+                marginEl.innerText += " (LOW BALANCE)";
+            } else {
+                marginEl.style.color = 'var(--accent-yellow)';
+            }
+
+            document.getElementById('calcSafeLot').innerText = `${safeLot.toFixed(2)} Lots`;
+
+            // Get current ATR for professional 1:2 R:R calculation
+            const atr = (globalData && globalData.timeframes && globalData.timeframes[selectedTimeframe]) ? globalData.timeframes[selectedTimeframe].atr : 1.0;
+            
+            const tpPts = atr * 3.0;
+            const slPts = atr * 1.5;
+
+            // Approximate dollar value calculation per point for R_25 (adjust contract multiplier if needed based on broker specs)
+            const dollarPerPoint = safeLot * 14.0; // Baseline R_25 point value multiplier per lot
+            const dollarGain = tpPts * dollarPerPoint;
+            const dollarLoss = slPts * dollarPerPoint;
+
+            document.getElementById('calcTargetProfit').innerText = `+$${dollarGain.toFixed(2)}`;
+            document.getElementById('calcMaxLoss').innerText = `-$${dollarLoss.toFixed(2)}`;
+            document.getElementById('calcFinalProfit').innerText = `$${(inputCapital + dollarGain).toFixed(2)}`;
+            document.getElementById('calcFinalLoss').innerText = `$${(inputCapital - dollarLoss).toFixed(2)}`;
+
+            if (currentLivePrice > 0) {
+                const tpPrice = currentLivePrice + tpPts;
+                const slPrice = currentLivePrice - slPts;
+                document.getElementById('calcTpPrice').innerText = tpPrice.toFixed(3);
+                document.getElementById('calcSlPrice').innerText = slPrice.toFixed(3);
+            }
+        }
+        function setSelectedItem(tf) {
+            selectedTimeframe = tf;
+            candleIntervalSeconds = tfIntervals[tf.toLowerCase()] || 300;
+
+            const links = document.querySelectorAll('.tf-link');
+            links.forEach(link => {
+                if (link.innerText.toLowerCase() === tf.toLowerCase()) {
+                    link.classList.add('active');
+                } else {
+                    link.classList.remove('active');
+                }
+            });
+
+            renderSelectedTimeframe();
+        }
+
+        function toggleTheme() {
+            const body = document.body;
+            const btn = document.getElementById('themeToggleBtn');
+            if (body.getAttribute('data-theme') === 'dark') {
+                body.setAttribute('data-theme', 'light');
+                btn.innerText = '☀️ Light';
+            } else {
+                body.setAttribute('data-theme', 'dark');
+                btn.innerText = '🌙 Dark';
+            }
+            updateChartThemeColors();
+        }
+
+        function updateChartThemeColors() {
+            const isDark = document.body.getAttribute('data-theme') === 'dark';
+            const gridColor = isDark ? '#1e293b' : '#cbd5e1';
+            const textColor = isDark ? '#94a3b8' : '#64748b';
+
+            [priceChartInstance, rsiChartInstance, stochChartInstance].forEach(chart => {
+                if (!chart) return;
+                if (chart.options.scales.y) {
+                    chart.options.scales.y.grid.color = gridColor;
+                    chart.options.scales.y.ticks.color = textColor;
+                }
+                chart.update('none');
+            });
+        }
+
+        function clearDrawnLines() {
+            drawnHorizontalLines = [];
+            if (priceChartInstance) priceChartInstance.update('none');
+        }
+
+        async function sendControl(action) {
+            await fetch('/api/control', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: action })
+            });
+        }
+
+        function evaluateConfluences(tf) {
+            if (!tf || !tf.candles || tf.candles.length === 0) return;
+
+            const price = currentLivePrice || tf.candles[tf.candles.length - 1].close;
+            const bbUpper = tf.bb_upper ? tf.bb_upper[tf.bb_upper.length - 1] : price + 10;
+            const bbLower = tf.bb_lower ? tf.bb_lower[tf.bb_lower.length - 1] : price - 10;
+            const stochK = tf.stoch_k_history ? tf.stoch_k_history[tf.stoch_k_history.length - 1] : 50;
+            const ema20 = tf.ema20 || price;
+            const atr = tf.atr || 1.0;
+
+            const bbWidth = bbUpper - bbLower;
+            const isConsolidating = bbWidth <= (atr * 4.0);
+
+            const squeezeStateEl = document.getElementById('tf-squeeze-state');
+            const breakoutAlertEl = document.getElementById('tf-breakout-alert');
+
+            if (isConsolidating) {
+                squeezeStateEl.innerText = '🟡 CONSOLIDATION (Squeeze)';
+                squeezeStateEl.style.color = 'var(--accent-yellow)';
+                squeezeStateEl.style.background = 'rgba(245, 158, 11, 0.2)';
+                squeezeStateEl.style.borderColor = 'var(--accent-yellow)';
+                squeezeStateEl.className = 'blinking-alert';
+            } else {
+                squeezeStateEl.innerText = '🟢 EXPANSION (Normal)';
+                squeezeStateEl.style.color = 'var(--accent-green)';
+                squeezeStateEl.style.background = 'rgba(16, 185, 129, 0.15)';
+                squeezeStateEl.style.borderColor = 'var(--accent-green)';
+                squeezeStateEl.className = '';
+            }
+
+            const isBullishBreakout = price > bbUpper || (stochK > 50 && price > ema20 && !isConsolidating);
+            const isBearishBreakout = price < bbLower || (stochK < 50 && price < ema20 && !isConsolidating);
+
+            if (isBullishBreakout) {
+                breakoutAlertEl.innerText = '🚀 BULLISH BREAKOUT';
+                breakoutAlertEl.style.color = 'var(--accent-green)';
+                breakoutAlertEl.style.background = 'rgba(16, 185, 129, 0.2)';
+                breakoutAlertEl.style.borderColor = 'var(--accent-green)';
+                breakoutAlertEl.className = 'blinking-alert';
+            } else if (isBearishBreakout) {
+                breakoutAlertEl.innerText = '🔻 BEARISH BREAKDOWN';
+                breakoutAlertEl.style.color = 'var(--accent-red)';
+                breakoutAlertEl.style.background = 'rgba(239, 68, 68, 0.2)';
+                breakoutAlertEl.style.borderColor = 'var(--accent-red)';
+                breakoutAlertEl.className = 'blinking-alert';
+            } else {
+                breakoutAlertEl.innerText = '⚡ STANDBY';
+                breakoutAlertEl.style.color = 'var(--text-muted)';
+                breakoutAlertEl.style.background = 'rgba(148, 163, 184, 0.1)';
+                breakoutAlertEl.style.borderColor = 'var(--border-color)';
+                breakoutAlertEl.className = '';
+            }
+
+            // Retest Confluence Evaluation
+            const distanceToEMA = Math.abs(price - ema20);
+            const isNearKeyLevel = distanceToEMA <= (atr * 0.6);
+            const isBuyRetest = isNearKeyLevel && price >= ema20;
+            const isSellRetest = isNearKeyLevel && price <= ema20;
+
+            const bannerEl = document.getElementById('retest-status-banner');
+            if (bannerEl) {
+                if (isBuyRetest) {
+                    bannerEl.innerText = "🟢 BULLISH RETEST CONFIRMED AT KEY LEVEL";
+                    bannerEl.style.color = "var(--accent-green)";
+                    bannerEl.style.borderColor = "var(--accent-green)";
+                } else if (isSellRetest) {
+                    bannerEl.innerText = "🔴 BEARISH RETEST CONFIRMED AT KEY LEVEL";
+                    bannerEl.style.color = "var(--accent-red)";
+                    bannerEl.style.borderColor = "var(--accent-red)";
+                } else {
+                    bannerEl.innerText = "🔍 Waiting for Price Pullback & Retest...";
+                    bannerEl.style.color = "var(--accent-cyan)";
+                    bannerEl.style.borderColor = "var(--accent-cyan)";
+                }
+            }
+
+            const buyBB = price <= (bbLower + (atr * 0.3));
+            const buyStoch = stochK <= 25;
+            const buyEMA = price > ema20;
+            const buySR = activeSrTargetVal > 0 && price >= activeSrTargetVal && (price - activeSrTargetVal) <= (atr * 0.8);
+            const buySqueeze = isBullishBreakout;
+
+            updateLight('c-buy-bb', buyBB);
+            updateLight('c-buy-stoch', buyStoch);
+            updateLight('c-buy-ema', buyEMA);
+            updateLight('c-buy-sr', buySR);
+            updateLight('c-buy-sq', buySqueeze);
+            updateLight('c-buy-retest', isBuyRetest);
+
+            const sellBB = price >= (bbUpper - (atr * 0.3));
+            const sellStoch = stochK >= 75;
+            const sellEMA = price < ema20;
+            const sellSR = activeSrTargetVal > 0 && price <= activeSrTargetVal && (activeSrTargetVal - price) <= (atr * 0.8);
+            const sellSqueeze = isBearishBreakout;
+
+            updateLight('c-sell-bb', sellBB);
+            updateLight('c-sell-stoch', sellStoch);
+            updateLight('c-sell-ema', sellEMA);
+            updateLight('c-sell-sr', sellSR);
+            updateLight('c-sell-sq', sellSqueeze);
+            updateLight('c-sell-retest', isSellRetest);
+
+            // Unified Total Confluence Score (out of 6 checks)
+            const buyScore = [buyBB, buyStoch, buyEMA, buySR, buySqueeze, isBuyRetest].filter(Boolean).length;
+            const sellScore = [sellBB, sellStoch, sellEMA, sellSR, sellSqueeze, isSellRetest].filter(Boolean).length;
+
+            const recDir = document.getElementById('rec-dir');
+            const recEntry = document.getElementById('rec-entry');
+            const recTp = document.getElementById('rec-tp');
+            const recSl = document.getElementById('rec-sl');
+            const btn = document.getElementById('btnConfirmTrade');
+
+            const openPos = (globalData && globalData.mt5_account) ? (globalData.mt5_account.open_positions || 0) : 0;
+
+            if (openPos > 0) {
+                recDir.innerText = "ACTIVE TRADE RUNNING";
+                recDir.style.color = "var(--accent-yellow)";
+                btn.disabled = true;
+                btn.innerText = "🔒 Trade Locked (Position Open)";
+                btn.style.background = "var(--text-muted)";
+                return;
+            }
+
+            if (buyScore >= 3 && buyScore > sellScore) {
+                const sl = price - (atr * 1.5);
+                const tp = price + (atr * 3.0);
+                recDir.innerText = `BUY (${buyScore}/6 OK)`;
+                recDir.style.color = "var(--accent-green)";
+                recEntry.innerText = price.toFixed(3);
+                recTp.innerText = tp.toFixed(3);
+                recSl.innerText = sl.toFixed(3);
+                btn.disabled = false;
+                btn.innerText = "✅ EXECUTE BUY ORDER (MT5)";
+                btn.style.background = "var(--accent-green)";
+            } else if (sellScore >= 3 && sellScore > buyScore) {
+                const sl = price + (atr * 1.5);
+                const tp = price - (atr * 3.0);
+                recDir.innerText = `SELL (${sellScore}/6 OK)`;
+                recDir.style.color = "var(--accent-red)";
+                recEntry.innerText = price.toFixed(3);
+                recTp.innerText = tp.toFixed(3);
+                recSl.innerText = sl.toFixed(3);
+                btn.disabled = false;
+                btn.innerText = "✅ EXECUTE SELL ORDER (MT5)";
+                btn.style.background = "var(--accent-red)";
+            } else {
+                recDir.innerText = "SCANNING...";
+                recDir.style.color = "var(--accent-yellow)";
+                recEntry.innerText = "---";
+                recTp.innerText = "---";
+                recSl.innerText = "---";
+                btn.disabled = true;
+                btn.innerText = "⏳ Awaiting Confluences...";
+                btn.style.background = "var(--text-muted)";
+            }
+        }
+
+        function updateLight(id, isOk) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            if (isOk) {
+                el.innerText = "🟢 OK";
+                el.className = "status-light light-green";
+            } else {
+                el.innerText = "🔴 PENDING";
+                el.className = "status-light light-red";
+            }
+        }
+
+        // Multi-tranche dispatcher respecting 200 lots max per trade and up to 1000 lots total
+        async function dispatchTradeInTranches(actionType, totalVolume, entry, tp, sl) {
+            const maxPerTrade = 200.00;
+            let remainingVolume = totalVolume;
+            let trancheCount = 1;
+            let successCount = 0;
+
+            const btn = document.getElementById('btnConfirmTrade');
+            btn.disabled = true;
+
+            while (remainingVolume > 0) {
+                let currentTrancheVol = Math.min(maxPerTrade, remainingVolume);
+                currentTrancheVol = Math.round(currentTrancheVol * 2) / 2; // Snap to 0.5 step
+
+                btn.innerText = `⏳ DISPATCHING TRANCHE ${trancheCount} (${currentTrancheVol} Lots)...`;
+
+                const payload = {
+                    timestamp: Math.floor(Date.now() / 1000),
+                    symbol: "Volatility 25 Index",
+                    action: actionType,
+                    volume: currentTrancheVol,
+                    entry: entry,
+                    tp: tp,
+                    sl: sl
+                };
+
+                try {
+                    const res = await fetch('/api/execute-trade', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (res.ok) successCount++;
+                } catch (e) {
+                    console.log(`Tranche ${trancheCount} failed`);
+                }
+
+                remainingVolume -= currentTrancheVol;
+                trancheCount++;
+                await new Promise(resolve => setTimeout(resolve, 350));
+            }
+
+            btn.disabled = false;
+            btn.innerText = "✅ EXECUTE ORDER (MT5)";
+            alert(`🚀 EXECUTED ${successCount} TRANCHES!\nTotal Volume: ${totalVolume} Lots (Split safely into max 200-lot dispatches).`);
+        }
+
+     async function confirmTradeExecution() {
+            const dir = document.getElementById('rec-dir').innerText;
+            const entry = parseFloat(document.getElementById('rec-entry').innerText);
+            const tp = parseFloat(document.getElementById('rec-tp').innerText);
+            const sl = parseFloat(document.getElementById('rec-sl').innerText);
+            
+            const lotText = document.getElementById('calcSafeLot').innerText;
+            let targetVolume = parseFloat(lotText) || 0.50;
+            
+            // Enforce single-trade maximum limit of 200 lots
+            const finalVolume = Math.min(200.00, Math.max(0.50, targetVolume));
+
+            const currentCapital = parseFloat(document.getElementById('calcCapitalInput').value) || 0;
+            const marginNeededText = document.getElementById('calcMarginRisk').innerText;
+            const marginNeeded = parseFloat(marginNeededText.replace('$', '')) || 0.35;
+
+            if (currentCapital < marginNeeded) {
+                alert(`❌ ORDER REJECTED: Insufficient Capital!`);
+                return;
+            }
+
+            const btn = document.getElementById('btnConfirmTrade');
+            btn.disabled = true;
+            btn.innerText = "⏳ DISPATCHING SINGLE ORDER...";
+
+            const payload = {
+                timestamp: Math.floor(Date.now() / 1000),
+                symbol: "Volatility 25 Index",
+                action: dir.includes("BUY") ? "BUY" : "SELL",
+                volume: finalVolume, // Single trade volume capped at 200 lots
+                entry: entry,
+                tp: tp,
+                sl: sl
+            };
+
+            try {
+                const res = await fetch('/api/execute-trade', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await res.json();
+                
+                if (res.ok) {
+                    alert(`🚀 SINGLE ORDER EXECUTED ON MT5!\nVolume: ${finalVolume} Lots\nTP: ${tp}\nSL: ${sl}`);
+                } else {
+                    alert(`❌ TRADE REJECTED BY MT5: ${result.message}`);
+                }
+            } catch (e) {
+                alert("Error connecting to Python Trade Server!");
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "✅ EXECUTE ORDER (MT5)";
+            }
+        }
+
+        async function executeManualTrade(actionType) {
+            const openPos = (globalData && globalData.mt5_account) ? (globalData.mt5_account.open_positions || 0) : 0;
+            if (openPos > 0) {
+                alert("❌ MANUAL TRADE REJECTED: Active trade already open on MT5.");
+                return;
+            }
+
+            const entry = currentLivePrice || 0;
+            if (entry <= 0) {
+                alert("❌ MANUAL TRADE REJECTED: Live price not available yet.");
+                return;
+            }
+
+            let targetVolume = parseFloat(document.getElementById('calcSafeLot').innerText.replace(' Lots', '')) || 0.50;
+            const finalVolume = Math.min(200.00, Math.max(0.50, targetVolume));
+
+            // Use current ATR from selected timeframe for professional 1:2 R:R
+            const atr = (globalData && globalData.timeframes && globalData.timeframes[selectedTimeframe]) ? globalData.timeframes[selectedTimeframe].atr : 1.0;
+
+            const tp = actionType === 'BUY' ? (entry + (atr * 3.0)) : (entry - (atr * 3.0));
+            const sl = actionType === 'BUY' ? (entry - (atr * 1.5)) : (entry + (atr * 1.5));
+
+            document.getElementById('calcTpPrice').innerText = tp.toFixed(3);
+            document.getElementById('calcSlPrice').innerText = sl.toFixed(3);
+
+            const payload = {
+                timestamp: Math.floor(Date.now() / 1000),
+                symbol: "Volatility 25 Index",
+                action: actionType,
+                volume: finalVolume,
+                entry: entry,
+                tp: tp,
+                sl: sl
+            };
+
+            try {
+                const res = await fetch('/api/execute-trade', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await res.json();
+                
+                if (res.ok) {
+                    alert(`🚀 MANUAL SINGLE ${actionType} ORDER EXECUTED!\nVolume: ${finalVolume} Lots\nTP: ${tp.toFixed(3)}\nSL: ${sl.toFixed(3)}`);
+                } else {
+                    alert(`❌ MANUAL TRADE REJECTED: ${result.message}`);
+                }
+            } catch (e) {
+                alert("Error connecting to Python Trade Server!");
+            }
+        }
+
+        function startCountdowns() {
+            setInterval(() => {
+                const now = Math.floor(Date.now() / 1000);
+
+                const activeIntervalSecs = tfIntervals[selectedTimeframe.toLowerCase()] || 300;
+                const activeRem = now % activeIntervalSecs;
+                const activeLeft = activeIntervalSecs - activeRem;
+                const activeMins = Math.floor(activeLeft / 60).toString().padStart(2, '0');
+                const activeSecs = (activeLeft % 60).toString().padStart(2, '0');
+
+                const mainCountdownEl = document.getElementById('candleCountdown');
+                if (mainCountdownEl) {
+                    mainCountdownEl.innerText = `⏳ ${activeMins}:${activeSecs}`;
+                }
+
+                Object.keys(tfIntervals).forEach(tfKey => {
+                    const sec = tfIntervals[tfKey];
+                    const rem = now % sec;
+                    const left = sec - rem;
+                    const m = Math.floor(left / 60).toString().padStart(2, '0');
+                    const s = (left % 60).toString().padStart(2, '0');
+
+                    const timerEl = document.getElementById(`matrix-timer-${tfKey}`);
+                    if (timerEl) {
+                        timerEl.innerText = `${m}:${s}`;
+                    }
+
+                    const statusEl = document.getElementById(`matrix-status-${tfKey}`);
+                    if (statusEl && globalData && globalData.timeframes) {
+                        const foundKey = Object.keys(globalData.timeframes).find(k => k.toLowerCase() === tfKey.toLowerCase());
+                        const tfObj = foundKey ? globalData.timeframes[foundKey] : null;
+                        if (tfObj) {
+                            const trend = tfObj.trend;
+                            statusEl.innerText = trend;
+                            statusEl.className = `matrix-status status-${trend.toLowerCase()}`;
+                        }
+                    }
+                });
+            }, 1000);
+        }
+
+        async function fetchDashboardData() {
+            try {
+                const res = await fetch('agent_state.json?t=' + Date.now());
+                if (!res.ok) return;
+                globalData = await res.json();
+
+                document.getElementById('last-update').innerText = `Synced: ${globalData.timestamp}`;
+                
+                if (globalData.agent_status) {
+                    document.getElementById('agentStatusBadge').innerText = globalData.agent_status;
+                }
+
+                if (globalData.current_price) {
+                    currentLivePrice = globalData.current_price;
+                    document.getElementById('livePriceDisplay').innerText = `R_25: ${currentLivePrice.toFixed(3)}`;
+
+                    const foundKey = Object.keys(globalData.timeframes).find(k => k.toLowerCase() === selectedTimeframe.toLowerCase());
+                    const tf = foundKey ? globalData.timeframes[foundKey] : null;
+                    
+                    if (tf && tf.candles && tf.candles.length > 0) {
+                        let latestCandle = tf.candles[tf.candles.length - 1];
+                        latestCandle.close = currentLivePrice;
+                        if (currentLivePrice > latestCandle.high) latestCandle.high = currentLivePrice;
+                        if (currentLivePrice < latestCandle.low) latestCandle.low = currentLivePrice;
+
+                        if (priceChartInstance) {
+                            const dataset = priceChartInstance.data.datasets[0];
+                            const lastIdx = dataset.data.length - 1;
+                            if (lastIdx >= 0) {
+                                dataset.data[lastIdx] = currentLivePrice;
+                                dataset.ohlcData[lastIdx].close = currentLivePrice;
+                                if (currentLivePrice > dataset.ohlcData[lastIdx].high) dataset.ohlcData[lastIdx].high = currentLivePrice;
+                                if (currentLivePrice < dataset.ohlcData[lastIdx].low) dataset.ohlcData[lastIdx].low = currentLivePrice;
+                                priceChartInstance.update('none');
+                            }
+                        }
+                    }
+                }
+
+                if (globalData.mt5_account) {
+                    const bal = globalData.mt5_account.balance || 0;
+                    const eq = globalData.mt5_account.equity || 0;
+                    const openPos = globalData.mt5_account.open_positions || 0;
+                    const floatPnl = globalData.mt5_account.profit || globalData.mt5_account.floating_pnl || 0;
+
+                    document.getElementById('mt5-balance').innerText = `$${bal.toFixed(2)}`;
+                    document.getElementById('mt5-equity').innerText = `$${eq.toFixed(2)}`;
+                    document.getElementById('mt5-open-pos').innerText = `${openPos} Trades`;
+                    
+                    const floatPnlEl = document.getElementById('mt5-floating-pnl');
+                    floatPnlEl.innerText = `$${floatPnl.toFixed(2)}`;
+                    floatPnlEl.style.color = floatPnl >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+                    
+                    const capitalInput = document.getElementById('calcCapitalInput');
+                    if (capitalInput && !window.userManuallyChangedCapital && bal > 0) {
+                        capitalInput.value = bal.toFixed(2);
+                    }
+                }
+
+                if (globalData.cpr) {
+                    const cpr = globalData.cpr;
+                    document.getElementById('cpr-r3').innerText = `${cpr.r3} / ${cpr.s3}`;
+                    document.getElementById('cpr-r1').innerText = `${cpr.r1} / ${cpr.s1}`;
+                    document.getElementById('cpr-zones').innerText = `${cpr.tc} / ${cpr.pivot} / ${cpr.bc}`;
+                    
+                    const vcprEl = document.getElementById('vcpr-badge');
+                    vcprEl.innerText = cpr.is_virgin ? "vCPR: YES" : "vCPR: Tested";
+                    vcprEl.style.color = cpr.is_virgin ? "var(--accent-green)" : "var(--text-muted)";
+                }
+
+                if (globalData.decision_audit) {
+                    const audit = globalData.decision_audit;
+                    
+                    // 1. Update Market Regime
+                    document.getElementById('audit-regime').innerText = audit.regime || "SCANNING";
+                    
+                    // 2. Update Consensus Score with dynamic coloring
+                    const scoreEl = document.getElementById('audit-score');
+                    const score = audit.consensus_score || 0;
+                    scoreEl.innerText = score;
+                    scoreEl.style.color = score >= 65 ? 'var(--accent-green)' : (score <= -65 ? 'var(--accent-red)' : 'var(--accent-yellow)');
+                    
+                    // 3. Update Active Strategy Paths
+                    const pathsEl = document.getElementById('audit-paths');
+                    pathsEl.innerText = (audit.active_paths && audit.active_paths.length > 0) ? audit.active_paths.join(' | ') : 'None active (HOLD)';
+                    
+                    // 4. Update Detailed Reasoning Audit
+                    document.getElementById('audit-reasoning').innerText = audit.reasoning || "Analyzing market conditions...";
+                }
+
+                if (globalData.signal) {
+                    const sigText = globalData.signal;
+                    const sig = document.getElementById('val-signal');
+                    sig.innerText = sigText;
+                    sig.className = "signal-box " + (sigText.includes("BUY") ? "signal-buy" : sigText.includes("SELL") ? "signal-sell" : "signal-hold");
+                }
+
+                calculatePositionAndMargin();
+                try {
+                    renderSelectedTimeframe();
+                } catch (err) {
+                    console.log("Chart render waiting for stable data frame...");
+                }
+            } catch (e) {
+                console.log("Waiting for backend telemetry...");
+            }
+        }
+
+        function updatePredictionsForSelectedTF(tf) {
+            if (!tf || !tf.candles || tf.candles.length < 5) return;
+            const cpr = globalData.cpr;
+            const currClose = currentLivePrice || tf.candles[tf.candles.length - 1].close;
+            const atr = tf.atr || 1.0;
+
+            const levels = {
+                "R3": cpr.r3, "R2": cpr.r2, "R1": cpr.r1,
+                "TC": cpr.tc, "Pivot": cpr.pivot, "BC": cpr.bc,
+                "S1": cpr.s1, "S2": cpr.s2, "S3": cpr.s3
+            };
+
+            let nearestName = "Pivot";
+            let nearestVal = cpr.pivot;
+            let minDist = Infinity;
+
+            for (let [name, val] of Object.entries(levels)) {
+                let dist = Math.abs(currClose - val);
+                if (dist < minDist) {
+                    minDist = dist;
+                    nearestName = name;
+                    nearestVal = val;
+                }
+            }
+
+            activeSrTargetVal = nearestVal;
+            const threshold = atr * 0.8;
+            let status = "IN_RANGE";
+            if (minDist <= threshold) status = `⚡ TESTING ${nearestName} (${nearestVal})`;
+            else if (currClose > nearestVal) status = `🚀 BREAKOUT ABOVE ${nearestName}`;
+            else status = `🛡️ DEFENDING ${nearestName}`;
+
+            document.getElementById('sr-alert-box').innerText = status;
+            document.getElementById('pred-target').innerText = `${nearestName} (${nearestVal})`;
+            document.getElementById('pred-distance').innerText = `${minDist.toFixed(2)} pts away`;
+
+            const stochK = tf.stoch_k_history ? tf.stoch_k_history[tf.stoch_k_history.length - 1] : 50;
+            const stochD = tf.stoch_d_history ? tf.stoch_d_history[tf.stoch_d_history.length - 1] : 50;
+            const stochBias = (stochK - stochD) * 0.1;
+            const srPull = (nearestVal - currClose) * 0.05;
+
+            let forecasts = [];
+            let basePrice = currClose;
+
+            for (let step = 1; step <= 3; step++) {
+                let stepMove = (stochBias + srPull) / step;
+                if (stepMove > atr * 0.4) stepMove = atr * 0.4;
+                if (stepMove < -atr * 0.4) stepMove = -atr * 0.4;
+
+                let stepOpen = basePrice;
+                let stepClose = basePrice + stepMove;
+                basePrice = stepClose;
+
+                let isBullStep = stepClose >= stepOpen;
+                let patternName = "";
+                let patternType = "";
+                let color = "";
+
+                if (Math.abs(stepClose - stepOpen) < (atr * 0.04)) {
+                    patternName = "Indecision Doji";
+                    patternType = "doji";
+                    color = "#94a3b8";
+                } else if (isBullStep) {
+                    patternName = step === 1 ? "Bullish Rebound" : (step === 2 ? "Momentum Push" : "Target Approach");
+                    patternType = "marubozu";
+                    color = "#10b981";
+                } else {
+                    patternName = step === 1 ? "Pullback Test" : (step === 2 ? "Support Slingshot" : "Re-test Zone");
+                    patternType = "impulse_down";
+                    color = "#ef4444";
+                }
+
+                forecasts.push({
+                    step: `T+${step}`,
+                    type: patternType,
+                    bias: isBullStep ? 'BULLISH' : 'BEARISH',
+                    pattern: patternName,
+                    color: color,
+                    open: stepOpen,
+                    close: stepClose
+                });
+            }
+
+            const fcContainer = document.getElementById('forecast-container');
+            fcContainer.innerHTML = '';
+            forecasts.forEach((f, idx) => {
+                fcContainer.innerHTML += `
+                    <div class="forecast-box">
+                        <div class="forecast-step">${f.step} (${f.bias})</div>
+                        <canvas id="predCanvas${idx}" width="32" height="22" style="margin: 1px auto; display:block;"></canvas>
+                        <div class="forecast-pattern" style="color: ${f.color};">${f.pattern}</div>
+                        <div style="font-size: 0.48rem; color: var(--text-muted);">O: ${f.open.toFixed(2)} | C: <span style="color:${f.color}; font-weight:bold;">${f.close.toFixed(2)}</span></div>
+                    </div>
+                `;
+            });
+
+            // Calculate global min/max price across all 3 steps for proper canvas scaling
+            let allPrices = forecasts.map(f => [f.open, f.close]).flat();
+            let minP = Math.min(...allPrices);
+            let maxP = Math.max(...allPrices);
+            let padding = (maxP - minP) * 0.2 || 1.0;
+            minP -= padding;
+            maxP += padding;
+
+           setTimeout(() => {
+                forecasts.forEach((f, idx) => {
+                    const canvas = document.getElementById(`predCanvas${idx}`);
+                    if (!canvas) return;
+                    const ctx = canvas.getContext('2d');
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                    const color = f.color;
+                    const midX = canvas.width / 2;
+                    const h = canvas.height;
+                    const isBull = f.close >= f.open;
+
+                    // 1. Draw Wicks (full vertical span or proportional)
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 1.2;
+                    ctx.beginPath();
+                    ctx.moveTo(midX, 3);
+                    ctx.lineTo(midX, h - 3);
+                    ctx.stroke();
+
+                    // 2. Proportional Body Heights based on direction & step momentum
+                    // Ensures T+1, T+2, T+3 have distinct visual heights instead of collapsing
+                    let bodyH = 8 + (idx * 3); // 8px for T+1, 11px for T+2, 14px for T+3
+                    let bodyY = isBull ? (h / 2) - (bodyH / 2) + 2 : (h / 2) - (bodyH / 2) - 2;
+
+                    // Keep inside canvas bounds
+                    bodyY = Math.max(2, Math.min(h - bodyH - 2, bodyY));
+
+                    ctx.fillStyle = color;
+                    ctx.fillRect(midX - 7, bodyY, 14, bodyH);
+                });
+            }, 50);
+        }
+
+        const solidCandlePlugin = {
+            id: 'solidCandlePlugin',
+            afterDatasetsDraw(chart) {
+                const dataset = chart.data.datasets[0];
+                if (!dataset || dataset.label !== 'Solid_Candles' || !dataset.ohlcData) return;
+
+                const ctx = chart.ctx;
+                const xAxis = chart.scales.x;
+                const yAxis = chart.scales.y;
+                const candles = dataset.ohlcData;
+                
+                if (!xAxis || !yAxis || !candles || candles.length === 0) return;
+
+                const isDark = document.body.getAttribute('data-theme') === 'dark';
+
+                ctx.save();
+
+                // Helper to draw solid bold lines with high-contrast background badges for active positions
+                function drawSolidTradeLevel(price, color, labelText) {
+                    const y = yAxis.getPixelForValue(price);
+                    if (y >= chart.chartArea.top && y <= chart.chartArea.bottom) {
+                        // 1. Solid Bold Line
+                        ctx.beginPath();
+                        ctx.strokeStyle = color;
+                        ctx.lineWidth = 3;
+                        ctx.setLineDash([]);
+                        ctx.moveTo(chart.chartArea.left, y);
+                        ctx.lineTo(chart.chartArea.right, y);
+                        ctx.stroke();
+
+                        // 2. High-Contrast Text Badge Box
+                        ctx.font = 'bold 10px Segoe UI';
+                        const textWidth = ctx.measureText(labelText).width;
+                        const badgeX = chart.chartArea.right - textWidth - 16;
+                        const badgeY = y - 11;
+
+                        ctx.fillStyle = isDark ? 'rgba(11, 15, 25, 0.9)' : 'rgba(255, 255, 255, 0.9)';
+                        ctx.fillRect(badgeX, badgeY, textWidth + 12, 16);
+
+                        ctx.strokeStyle = color;
+                        ctx.lineWidth = 1;
+                        ctx.strokeRect(badgeX, badgeY, textWidth + 12, 16);
+
+                        // 3. Text Label
+                        ctx.fillStyle = color;
+                        ctx.textAlign = 'right';
+                        ctx.fillText(labelText, chart.chartArea.right - 10, y - 1);
+                    }
+                }
+
+                // Render Active MT5 Positions (Solid Bold Lines + Badges)
+                const mt5Acc = globalData && globalData.mt5_account ? globalData.mt5_account : {};
+                const positions = mt5Acc.positions || [];
+                positions.forEach(pos => {
+                    if (pos.price) drawSolidTradeLevel(pos.price, '#06b6d4', `📍 ENTRY (${pos.type}): ${pos.price.toFixed(3)}`);
+                    if (pos.tp && pos.tp > 0) drawSolidTradeLevel(pos.tp, '#10b981', `🎯 TAKE PROFIT: ${pos.tp.toFixed(3)}`);
+                    if (pos.sl && pos.sl > 0) drawSolidTradeLevel(pos.sl, '#ef4444', `🛡️ STOP LOSS: ${pos.sl.toFixed(3)}`);
+                });
+
+                candles.forEach((c, i) => {
+                    const x = xAxis.getPixelForValue(i);
+                    if (x === undefined || isNaN(x) || x < chart.chartArea.left || x > chart.chartArea.right) return;
+
+                    const openY = yAxis.getPixelForValue(c.open);
+                    const highY = yAxis.getPixelForValue(c.high);
+                    const lowY = yAxis.getPixelForValue(c.low);
+                    const closeY = yAxis.getPixelForValue(c.close);
+
+                    if ([openY, highY, lowY, closeY].some(v => v === undefined || isNaN(v))) return;
+
+                    const isBullish = c.close >= c.open;
+                    const color = isBullish ? '#10b981' : '#ef4444';
+
+                    ctx.beginPath();
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 1.2;
+                    ctx.moveTo(x, highY);
+                    ctx.lineTo(x, lowY);
+                    ctx.stroke();
+
+                    const bodyTop = Math.min(openY, closeY);
+                    const bodyHeight = Math.max(Math.abs(openY - closeY), 2);
+                    const barWidth = Math.max(2, (chart.chartArea.width / candles.length) * 0.65);
+
+                    ctx.fillStyle = color;
+                    ctx.fillRect(x - barWidth / 2, bodyTop, barWidth, bodyHeight);
+                });
+
+                const levels = chart.options.plugins.cprLabels || [];
+                ctx.font = 'bold 8px Segoe UI';
+                levels.forEach(lvl => {
+                    const y = yAxis.getPixelForValue(lvl.value);
+                    if (y >= chart.chartArea.top && y <= chart.chartArea.bottom) {
+                        const isTarget = Math.abs(lvl.value - activeSrTargetVal) < 0.01;
+                        const isCoreCPR = ['Pivot', 'TC', 'BC'].includes(lvl.name);
+
+                        ctx.beginPath();
+                        ctx.strokeStyle = isCoreCPR ? lvl.color : (isTarget ? '#ef4444' : 'rgba(148, 163, 184, 0.3)');
+                        ctx.lineWidth = isCoreCPR ? 1.5 : 1;
+                        ctx.setLineDash(isCoreCPR ? [4, 2] : [2, 2]);
+                        ctx.moveTo(chart.chartArea.left, y);
+                        ctx.lineTo(chart.chartArea.right, y);
+                        ctx.stroke();
+                        ctx.setLineDash([]);
+
+                        ctx.fillStyle = isTarget ? '#ef4444' : lvl.color;
+                        ctx.textAlign = 'left';
+                        ctx.fillText(`${lvl.name}: ${lvl.value}${isTarget ? ' ◄ TARGET' : ''}`, chart.chartArea.right - 90, y - 3);
+                    }
+                });
+
+                drawnHorizontalLines.forEach((linePrice) => {
+                    const y = yAxis.getPixelForValue(linePrice);
+                    if (y >= chart.chartArea.top && y <= chart.chartArea.bottom) {
+                        ctx.beginPath();
+                        ctx.strokeStyle = '#9B870C';
+                        ctx.lineWidth = 2;
+                        ctx.moveTo(chart.chartArea.left, y);
+                        ctx.lineTo(chart.chartArea.right, y);
+                        ctx.stroke();
+
+                        ctx.fillStyle = '#9B870C';
+                        ctx.font = 'bold 9px Segoe UI';
+                        ctx.textAlign = 'right';
+                        ctx.fillText(`📍 Custom: ${linePrice.toFixed(3)} [Click to delete]`, chart.chartArea.right - 10, y - 4);
+                    }
+                });
+
+                ctx.restore();
+            }
+        };
+
+        Chart.register(solidCandlePlugin);
+
+        function setupInteractiveCanvasClick() {
+            const canvas = document.getElementById('priceChart');
+            if (!canvas) return;
+
+            canvas.onclick = function(e) {
+                if (!priceChartInstance) return;
+
+                const rect = canvas.getBoundingClientRect();
+                const clickY = e.clientY - rect.top;
+
+                const chartArea = priceChartInstance.chartArea;
+                if (!chartArea || clickY < chartArea.top || clickY > chartArea.bottom) return;
+
+                const yAxis = priceChartInstance.scales.y;
+                const clickedPrice = yAxis.getValueForPixel(clickY);
+
+                let deleteIdx = -1;
+                for (let i = 0; i < drawnHorizontalLines.length; i++) {
+                    const lineY = yAxis.getPixelForValue(drawnHorizontalLines[i]);
+                    if (Math.abs(clickY - lineY) <= 6) {
+                        deleteIdx = i;
+                        break;
+                    }
+                }
+
+                if (deleteIdx !== -1) {
+                    drawnHorizontalLines.splice(deleteIdx, 1);
+                } else {
+                    drawnHorizontalLines.push(clickedPrice);
+                }
+
+                priceChartInstance.update('none');
+            };
+        }
+
+        function renderSelectedTimeframe() {
+            if (!globalData) return;
+
+            const foundKey = Object.keys(globalData.timeframes).find(k => k.toLowerCase() === selectedTimeframe.toLowerCase());
+            const tf = foundKey ? globalData.timeframes[foundKey] : null;
+            if (!tf || !tf.candles) return;
+
+            document.getElementById('tf-trend').innerText = tf.trend;
+            document.getElementById('tf-ema').innerText = `${tf.ema20 || '---'} / ${tf.ema50 || '---'} / ${tf.ema200 || '---'}`;
+            document.getElementById('tf-rsi').innerText = tf.rsi;
+            document.getElementById('tf-atr').innerText = tf.atr;
+            document.getElementById('tf-pressure').innerText = `${tf.bullish_pressure}% Bullish`;
+
+            if (tf.candles.length > 0 && !globalData.current_price) {
+                currentLivePrice = tf.candles[tf.candles.length - 1].close;
+                document.getElementById('livePriceDisplay').innerText = `R_25: ${currentLivePrice.toFixed(3)}`;
+            }
+
+            updatePredictionsForSelectedTF(tf);
+            evaluateConfluences(tf);
+
+            const cpr = globalData.cpr || { r3:0, r2:0, r1:0, tc:0, pivot:0, bc:0, s1:0, s2:0, s3:0 };
+            const candlesSlice = tf.candles;
+            const baseTimestamp = globalData.timestamp ? globalData.timestamp : Math.floor(Date.now() / 1000);
+            
+            const labels = candlesSlice.map((c, i) => {
+                let candleTime = c.time;
+                if (typeof candleTime === 'number') {
+                    const dateObj = new Date(candleTime * 1000);
+                    return dateObj.toTimeString().split(' ')[0];
+                } else if (typeof candleTime === 'string') {
+                    return candleTime.includes(' ') ? candleTime.split(' ')[1] : candleTime;
+                }
+                const fallbackDate = new Date((baseTimestamp - (candlesSlice.length - 1 - i) * candleIntervalSeconds) * 1000);
+                return fallbackDate.toTimeString().split(' ')[0];
+            });
+
+            const closes = candlesSlice.map(c => c.close);
+
+            const bbUpper = tf.bb_upper || closes;
+            const bbMiddle = tf.bb_middle || closes;
+            const bbLower = tf.bb_lower || closes;
+            const ema20Arr = tf.ema20_history || closes;
+            const ema50Arr = tf.ema50_history || closes;
+            const ema200Arr = tf.ema200_history || closes;
+
+            const prevOpenVal = tf.prev_day_open || closes[0];
+            const prevCloseVal = tf.prev_day_close || closes[0];
+
+            const prevOpenArr = candlesSlice.map(() => prevOpenVal);
+            const prevCloseArr = candlesSlice.map(() => prevCloseVal);
+
+            const localHighs = [...candlesSlice.map(c => c.high), ...bbUpper, prevOpenVal, prevCloseVal, ...drawnHorizontalLines];
+            const localLows = [...candlesSlice.map(c => c.low), ...bbLower, prevOpenVal, prevCloseVal, ...drawnHorizontalLines];
+            const minY = Math.min(...localLows) - 0.5;
+            const maxY = Math.max(...localHighs) + 0.5;
+
+            const cprLevelsForLabels = [
+                { name: 'R3', value: cpr.r3, color: '#7f1d1d' },
+                { name: 'R2', value: cpr.r2, color: '#dc2626' },
+                { name: 'R1', value: cpr.r1, color: '#f87171' },
+                { name: 'TC', value: cpr.tc, color: '#ef4444' },
+                { name: 'Pivot', value: cpr.pivot, color: '#f59e0b' },
+                { name: 'BC', value: cpr.bc, color: '#10b981' },
+                { name: 'S1', value: cpr.s1, color: '#34d399' },
+                { name: 'S2', value: cpr.s2, color: '#059669' },
+                { name: 'S3', value: cpr.s3, color: '#022c22' }
+            ];
+
+            const isDark = document.body.getAttribute('data-theme') === 'dark';
+            const gridColor = isDark ? '#1e293b' : '#cbd5e1';
+            const textColor = isDark ? '#94a3b8' : '#64748b';
+
+            if (!priceChartInstance) {
+                const ctx = document.getElementById('priceChart').getContext('2d');
+                priceChartInstance = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            { label: 'Solid_Candles', data: closes, ohlcData: candlesSlice, borderColor: 'transparent', pointRadius: 0, order: 7 },
+                            { label: 'Prev Close', data: prevCloseArr, borderColor: '#FF8C00', borderWidth: 2, pointRadius: 0, fill: false, order: 6 },
+                            { label: 'Prev Open', data: prevOpenArr, borderColor: '#FF8C00', borderWidth: 2, pointRadius: 0, fill: false, order: 5 },
+                            { label: 'BB Upper', data: bbUpper, borderColor: '#ec4899', borderWidth: 1.2, borderDash: [4,2], pointRadius: 0, fill: false, order: 4 },
+                            { label: 'BB Middle', data: bbMiddle, borderColor: 'rgba(245, 158, 11, 0.4)', borderWidth: 1, pointRadius: 0, fill: false, order: 4 },
+                            { label: 'BB Lower', data: bbLower, borderColor: '#8b5cf6', borderWidth: 1.2, borderDash: [4,2], pointRadius: 0, fill: false, order: 4 },
+                            { label: 'EMA 20', data: ema20Arr, borderColor: '#06b6d4', borderWidth: 1, pointRadius: 0, fill: false, order: 3 },
+                            { label: 'EMA 50', data: ema50Arr, borderColor: '#f59e0b', borderWidth: 1, pointRadius: 0, fill: false, order: 2 },
+                            { label: 'EMA 200', data: ema200Arr, borderColor: '#a855f7', borderWidth: 1.2, pointRadius: 0, fill: false, order: 1 }
+                        ]
+                    },
+                    options: {
+                        responsive: true, maintainAspectRatio: false, animation: false,
+                        plugins: { legend: { display: false }, cprLabels: cprLevelsForLabels },
+                        scales: { 
+                            x: { display: true, grid: { color: gridColor }, ticks: { font: { size: 6 }, color: textColor, maxTicksLimit: 8 }, offset: true },
+                            y: { min: minY, max: maxY, grid: { color: gridColor }, ticks: { font: { size: 7 }, color: textColor } }
+                        }
+                    }
+                });
+                setupInteractiveCanvasClick();
+            } else {
+                priceChartInstance.data.labels = labels;
+                priceChartInstance.data.datasets[0].data = closes;
+                priceChartInstance.data.datasets[0].ohlcData = candlesSlice;
+                priceChartInstance.data.datasets[1].data = prevCloseArr;
+                priceChartInstance.data.datasets[2].data = prevOpenArr;
+                priceChartInstance.data.datasets[3].data = bbUpper;
+                priceChartInstance.data.datasets[4].data = bbMiddle;
+                priceChartInstance.data.datasets[5].data = bbLower;
+                priceChartInstance.data.datasets[6].data = ema20Arr;
+                priceChartInstance.data.datasets[7].data = ema50Arr;
+                priceChartInstance.data.datasets[8].data = ema200Arr;
+
+                priceChartInstance.options.scales.y.min = minY;
+                priceChartInstance.options.scales.y.max = maxY;
+                priceChartInstance.options.plugins.cprLabels = cprLevelsForLabels;
+                priceChartInstance.update('none');
+            }
+
+            const rsiSlice = tf.rsi_history || candlesSlice.map(() => 50);
+            const obArray = candlesSlice.map(() => 85);
+            const osArray = candlesSlice.map(() => 15);
+
+            if (!rsiChartInstance) {
+                const rCtx = document.getElementById('rsiChart').getContext('2d');
+                rsiChartInstance = new Chart(rCtx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            { label: 'RSI (10)', data: rsiSlice, borderColor: '#ec4899', borderWidth: 1, pointRadius: 0, fill: false, order: 1 },
+                            { label: 'OB (85)', data: obArray, borderColor: 'rgba(239, 68, 68, 0.6)', borderDash: [2,2], borderWidth: 1, pointRadius: 0, fill: false, order: 2 },
+                            { label: 'OS (15)', data: osArray, borderColor: 'rgba(16, 185, 129, 0.6)', borderDash: [2,2], borderWidth: 1, pointRadius: 0, fill: false, order: 2 }
+                        ]
+                    },
+                    options: {
+                        responsive: true, maintainAspectRatio: false, animation: false,
+                        plugins: { legend: { display: false } },
+                        scales: { y: { min: 0, max: 100, ticks: { font: { size: 6 }, color: textColor, stepSize: 50 }, grid: { color: gridColor } }, x: { display: false, offset: true } }
+                    }
+                });
+            } else {
+                rsiChartInstance.data.labels = labels;
+                rsiChartInstance.data.datasets[0].data = rsiSlice;
+                rsiChartInstance.data.datasets[1].data = obArray;
+                rsiChartInstance.data.datasets[2].data = osArray;
+                rsiChartInstance.options.scales.y.grid.color = gridColor;
+                rsiChartInstance.options.scales.y.ticks.color = textColor;
+                rsiChartInstance.update('none');
+            }
+
+            const stochK = tf.stoch_k_history || candlesSlice.map(() => 50);
+            const stochD = tf.stoch_d_history || candlesSlice.map(() => 50);
+
+            if (!stochChartInstance) {
+                const sCtx = document.getElementById('stochChart').getContext('2d');
+                stochChartInstance = new Chart(sCtx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            { label: '%K', data: stochK, borderColor: '#38bdf8', borderWidth: 1, pointRadius: 0, fill: false },
+                            { label: '%D', data: stochD, borderColor: '#f43f5e', borderWidth: 1, pointRadius: 0, fill: false }
+                        ]
+                    },
+                    options: {
+                        responsive: true, maintainAspectRatio: false, animation: false,
+                        plugins: { legend: { display: false } },
+                        scales: { y: { min: 0, max: 100, ticks: { font: { size: 6 }, color: textColor, stepSize: 50 }, grid: { color: gridColor } }, x: { display: false, offset: true } }
+                    }
+                });
+            } else {
+                stochChartInstance.data.labels = labels;
+                stochChartInstance.data.datasets[0].data = stochK;
+                stochChartInstance.data.datasets[1].data = stochD;
+                stochChartInstance.options.scales.y.grid.color = gridColor;
+                stochChartInstance.options.scales.y.ticks.color = textColor;
+                stochChartInstance.update('none');
+            }
+        }
+
+        // Connect to Python Backend WebSocket Push Stream (Port 8765)
+        function connectUIWebSocket() {
+            const ws = new WebSocket('ws://localhost:8765');
+
+            ws.onopen = function() {
+                console.log("🔗 Connected to Agent Real-Time Push Stream");
+                document.getElementById('last-update').innerText = "Status: Live Stream Active";
+            };
+
+            ws.onmessage = function(event) {
+                globalData = JSON.parse(event.data);
+                document.getElementById('last-update').innerText = `Synced: ${globalData.timestamp}`;
+                
+                if (globalData.current_price) {
+                    currentLivePrice = globalData.current_price;
+                    document.getElementById('livePriceDisplay').innerText = `R_25: ${currentLivePrice.toFixed(3)}`;
+                }
+
+
+                    if (globalData.decision_audit) {
+                    const audit = globalData.decision_audit;
+                    
+                    // 1. Update Market Regime
+                    document.getElementById('audit-regime').innerText = audit.regime || "SCANNING";
+                    
+                    // 2. Update Consensus Score with dynamic coloring
+                    const scoreEl = document.getElementById('audit-score');
+                    const score = audit.consensus_score || 0;
+                    scoreEl.innerText = score;
+                    scoreEl.style.color = score >= 65 ? 'var(--accent-green)' : (score <= -65 ? 'var(--accent-red)' : 'var(--accent-yellow)');
+                    
+                    // 3. Update Active Strategy Paths
+                    const pathsEl = document.getElementById('audit-paths');
+                    pathsEl.innerText = (audit.active_paths && audit.active_paths.length > 0) ? audit.active_paths.join(' | ') : 'None active (HOLD)';
+                    
+                    // 4. Update Detailed Reasoning Audit
+                    document.getElementById('audit-reasoning').innerText = audit.reasoning || "Analyzing market conditions...";
+                }
+                if (globalData.mt5_account) {
+                    const bal = globalData.mt5_account.balance || 0;
+                    const eq = globalData.mt5_account.equity || 0;
+                    const openPos = globalData.mt5_account.open_positions || 0;
+                    const floatPnl = globalData.mt5_account.profit || globalData.mt5_account.floating_pnl || 0;
+
+                    document.getElementById('mt5-balance').innerText = `$${bal.toFixed(2)}`;
+                    document.getElementById('mt5-equity').innerText = `$${eq.toFixed(2)}`;
+                    document.getElementById('mt5-open-pos').innerText = `${openPos} Trades`;
+                    
+                    const floatPnlEl = document.getElementById('mt5-floating-pnl');
+                    floatPnlEl.innerText = `$${floatPnl.toFixed(2)}`;
+                    floatPnlEl.style.color = floatPnl >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+                    
+                    const capitalInput = document.getElementById('calcCapitalInput');
+                    if (capitalInput && !window.userManuallyChangedCapital && bal > 0) {
+                        capitalInput.value = bal.toFixed(2);
+                    }
+                }
+
+                if (globalData.cpr) {
+                    const cpr = globalData.cpr;
+                    document.getElementById('cpr-r3').innerText = `${cpr.r3} / ${cpr.s3}`;
+                    document.getElementById('cpr-r1').innerText = `${cpr.r1} / ${cpr.s1}`;
+                    document.getElementById('cpr-zones').innerText = `${cpr.tc} / ${cpr.pivot} / ${cpr.bc}`;
+                    
+                    const vcprEl = document.getElementById('vcpr-badge');
+                    vcprEl.innerText = cpr.is_virgin ? "vCPR: YES" : "vCPR: Tested";
+                    vcprEl.style.color = cpr.is_virgin ? "var(--accent-green)" : "var(--text-muted)";
+                }
+
+                if (globalData.signal) {
+                    const sigText = globalData.signal;
+                    const sig = document.getElementById('val-signal');
+                    sig.innerText = sigText;
+                    sig.className = "signal-box " + (sigText.includes("BUY") ? "signal-buy" : sigText.includes("SELL") ? "signal-sell" : "signal-hold");
+                }
+
+                calculatePositionAndMargin();
+                try {
+                    renderSelectedTimeframe();
+                } catch (err) {
+                    console.log("Chart render waiting for stable data frame...");
+                }
+            };
+
+            ws.onclose = function() {
+                console.log("⚠️ Push Stream disconnected. Reconnecting in 1s...");
+                document.getElementById('last-update').innerText = "Status: Reconnecting...";
+                setTimeout(connectUIWebSocket, 1000);
+            };
+
+            ws.onerror = function(err) {
+                console.error("WebSocket Error:", err);
+            };
+        }
+
+        // Initialize WebSocket Push & Candle Countdowns
+        connectUIWebSocket();
+        startCountdowns();
+    </script>
+</body>
+</html>

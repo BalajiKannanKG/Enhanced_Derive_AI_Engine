@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "enhanced_derive_ai_engine"
+version = "0.1.0"
+dependencies = [
+    "pandas>=2.0",
+    "pandas-ta",
+    "websocket-client",
+    "websockets",
+]
+
+[tool.setuptools]
+py-modules = ["Enhanced_Derive_AI_Engine"]
+
+[project.scripts]
+run-engine = "Enhanced_Derive_AI_Engine:main"

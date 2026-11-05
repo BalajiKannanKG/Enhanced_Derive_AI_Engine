@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Local credentials and runtime state
+credentials.json
+token.pickle
+agent_state.json
+trade_history.json
+trade_lifecycle.log
+multi_timeframe_trade_log.csv
+trade_request.json
+account_state.json
+runtime/

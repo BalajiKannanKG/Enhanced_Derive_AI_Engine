@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VIX25 Multi-Timeframe Trade Log & Performance Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --card-bg: #131b2e;
+            --accent-cyan: #06b6d4;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --accent-yellow: #f59e0b;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --border-color: #1e293b;
+        }
+        body { margin: 0; padding: 10px; background-color: var(--bg-color); color: var(--text-main); font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; box-sizing: border-box; }
+        header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 8px; margin-bottom: 10px; }
+        h1 { margin: 0; font-size: 1.1rem; color: var(--accent-cyan); display: flex; align-items: center; gap: 8px; }
+        .nav-links { display: flex; gap: 8px; }
+        .nav-link { background: rgba(6, 182, 212, 0.15); border: 1px solid var(--accent-cyan); color: var(--accent-cyan); padding: 4px 10px; border-radius: 4px; font-size: 0.75rem; text-decoration: none; font-weight: bold; }
+        .nav-link:hover { background: rgba(6, 182, 212, 0.3); }
+        
+        .metrics-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-bottom: 10px; }
+        .metric-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 6px; padding: 8px; text-align: center; }
+        .metric-title { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: bold; }
+        .metric-value { font-size: 1rem; font-weight: bold; margin-top: 4px; }
+        
+        .charts-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 8px; margin-bottom: 10px; }
+        .card { background-color: var(--card-bg); border: 1px solid var(--border-color); border-radius: 6px; padding: 10px; display: flex; flex-direction: column; }
+        .card h3 { margin: 0 0 6px 0; font-size: 0.8rem; color: var(--accent-cyan); border-bottom: 1px solid var(--border-color); padding-bottom: 4px; }
+        .chart-box { position: relative; height: 180px; width: 100%; }
+
+        .table-container { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 6px; padding: 10px; max-height: 350px; overflow-y: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.7rem; text-align: left; }
+        th, td { padding: 5px 8px; border-bottom: 1px solid var(--border-color); }
+        th { background: rgba(255,255,255,0.02); color: var(--text-muted); position: sticky; top: 0; }
+        .badge-buy { background: rgba(16, 185, 129, 0.2); color: var(--accent-green); padding: 2px 5px; border-radius: 3px; font-weight: bold; }
+        .badge-sell { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); padding: 2px 5px; border-radius: 3px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>📜 Multi-Timeframe Trade Log & Performance Dashboard</h1>
+        <div class="nav-links">
+            <a href="/" class="nav-link">📊 Live Room</a>
+            <a href="/tracker" class="nav-link">📈 Day Tracker</a>
+        </div>
+    </header>
+
+    <div class="metrics-grid">
+        <div class="metric-card"><div class="metric-title">Starting Capital</div><div class="metric-value">$200.00</div></div>
+        <div class="metric-card"><div class="metric-title">Final Balance</div><div id="m-final" class="metric-value" style="color:var(--accent-green)">$3,142.78</div></div>
+        <div class="metric-card"><div class="metric-title">Net Growth</div><div id="m-growth" class="metric-value" style="color:var(--accent-green)">+$2,942.78 (+1,471%)</div></div>
+        <div class="metric-card"><div class="metric-title">Total Trades</div><div id="m-trades" class="metric-value">35,689</div></div>
+        <div class="metric-card"><div class="metric-title">Win Rate</div><div id="m-winrate" class="metric-value" style="color:var(--accent-cyan)">45.46%</div></div>
+        <div class="metric-card"><div class="metric-title">Max Drawdown</div><div id="m-drawdown" class="metric-value" style="color:var(--accent-red)">$43.99</div></div>
+    </div>
+
+    <div class="charts-grid">
+        <div class="card">
+            <h3>📈 Account Balance Growth Curve</h3>
+            <div class="chart-box"><canvas id="balanceChart"></canvas></div>
+        </div>
+        <div class="card">
+            <h3>⚖️ Trade Outcome Distribution</h3>
+            <div class="chart-box"><canvas id="outcomeChart"></canvas></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>📋 Executed Trade History Log (CSV Exported)</h3>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Entry Time</th>
+                        <th>Type</th>
+                        <th>H1 Trend</th>
+                        <th>Lot Size</th>
+                        <th>Entry</th>
+                        <th>Exit</th>
+                        <th>RSI</th>
+                        <th>PnL ($)</th>
+                        <th>Result</th>
+                        <th>Balance ($)</th>
+                    </tr>
+                </thead>
+                <tbody id="tradeLogTableBody">
+                    <tr><td colspan="11" style="text-align:center; color:var(--text-muted);">Loading trade history...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        let balanceChartInstance = null;
+        let outcomeChartInstance = null;
+
+        async function loadTradeLogData() {
+            try {
+                const res = await fetch('/api/tradelog-data');
+                const data = await res.json();
+                
+                if (!data || data.length === 0) return;
+
+                const lastTrade = data[data.length - 1];
+                const finalBal = lastTrade.balance || 200.0;
+                const netGrowth = finalBal - 200.0;
+                const growthPct = (netGrowth / 200.0) * 100;
+                const wins = data.filter(t => t.result === 'TP').length;
+                const winRate = data.length > 0 ? (wins / data.length) * 100 : 0;
+
+                document.getElementById('m-final').innerText = `$${finalBal.toFixed(2)}`;
+                document.getElementById('m-growth').innerText = `+$${netGrowth.toFixed(2)} (+${growthPct.toFixed(1)}%)`;
+                document.getElementById('m-trades').innerText = data.length.toLocaleString();
+                document.getElementById('m-winrate').innerText = `${winRate.toFixed(2)}%`;
+
+                const tbody = document.getElementById('tradeLogTableBody');
+                tbody.innerHTML = '';
+                
+                const recentTrades = [...data].reverse().slice(0, 200);
+                recentTrades.forEach((t, index) => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>#${t.trade_id || (data.length - index)}</td>
+                        <td>${t.entry_time || '--'}</td>
+                        <td><span class="${t.action === 'BUY' || t.type === 'BUY' ? 'badge-buy' : 'badge-sell'}">${t.action || t.type || 'BUY'}</span></td>
+                        <td>${t.trend_h1 || 'BULLISH'}</td>
+                        <td>${(t.volume || t.lot_size || 0.5).toFixed(2)}</td>
+                        <td>${(t.entry || t.entry_price || 0).toFixed(3)}</td>
+                        <td>${(t.exit_price || 0).toFixed(3)}</td>
+                        <td>${t.rsi || 50.0}</td>
+                        <td style="color:${(t.pnl || 0) >= 0 ? 'var(--accent-green)' : 'var(--accent-red)'}; font-weight:bold;">${(t.pnl || 0) >= 0 ? '+' : ''}${(t.pnl || 0).toFixed(2)}</td>
+                        <td><span style="color:${t.result === 'TP' ? 'var(--accent-green)' : 'var(--accent-red)'}; font-weight:bold;">${t.result || 'OPEN'}</span></td>
+                        <td style="font-weight:bold;">$${(t.balance || 200.0).toFixed(2)}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+
+                const step = Math.max(1, Math.floor(data.length / 300));
+                const chartLabels = [];
+                const chartBalances = [];
+                
+                data.forEach((t, i) => {
+                    if (i % step === 0 || i === data.length - 1) {
+                        const timeStr = t.entry_time || '2026-10-26';
+                        chartLabels.push(timeStr.split(' ')[0]);
+                        chartBalances.push(t.balance || 200.0);
+                    }
+                });
+
+                const bCtx = document.getElementById('balanceChart').getContext('2d');
+                if (!balanceChartInstance) {
+                    balanceChartInstance = new Chart(bCtx, {
+                        type: 'line',
+                        data: {
+                            labels: chartLabels,
+                            datasets: [{
+                                label: 'Account Balance ($)',
+                                data: chartBalances,
+                                borderColor: '#10b981',
+                                backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                                borderWidth: 2,
+                                fill: true,
+                                pointRadius: 0
+                            }]
+                        },
+                        options: {
+                            responsive: true, maintainAspectRatio: false,
+                            plugins: { legend: { display: false } },
+                            scales: {
+                                x: { ticks: { font: { size: 9 }, color: '#94a3b8', maxTicksLimit: 8 }, grid: { color: '#1e293b' } },
+                                y: { ticks: { font: { size: 9 }, color: '#94a3b8' }, grid: { color: '#1e293b' } }
+                            }
+                        }
+                    });
+                }
+
+                const oCtx = document.getElementById('outcomeChart').getContext('2d');
+                const losses = data.length - wins;
+                if (!outcomeChartInstance) {
+                    outcomeChartInstance = new Chart(oCtx, {
+                        type: 'doughnut',
+                        data: {
+                            labels: ['Take Profit (Wins)', 'Stop Loss (Losses)'],
+                            datasets: [{
+                                data: [wins, losses],
+                                backgroundColor: ['#10b981', '#ef4444'],
+                                borderWidth: 0
+                            }]
+                        },
+                        options: {
+                            responsive: true, maintainAspectRatio: false,
+                            plugins: { legend: { position: 'bottom', labels: { color: '#f8fafc', font: { size: 10 } } } }
+                        }
+                    });
+                }
+
+            } catch (e) {
+                console.log("Error loading trade log telemetry:", e);
+            }
+        }
+
+        loadTradeLogData();
+    </script>
+</body>
+</html>

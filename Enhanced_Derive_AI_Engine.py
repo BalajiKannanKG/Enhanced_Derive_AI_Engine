@@ -370,6 +370,29 @@ def evaluate_multi_path_strategy(tf_data, h1_data, current_price, cpr, all_timef
     return action, audit
 
 def check_and_auto_trigger_trade(agent_state):
+    timeframes = agent_state.get("timeframes", {})
+    tf_data = timeframes.get("5m", {})
+    h1_data = timeframes.get("h1", {})
+    current_price = agent_state.get("current_price", 0.0)
+
+    if current_price <= 0 or not tf_data or not h1_data:
+        agent_state["decision_audit"] = {
+            "regime": "SCANNING",
+            "consensus_score": 0,
+            "active_paths": [],
+            "reasoning": "Waiting for complete 5m and 1h market data."
+        }
+        return
+
+    action, audit = evaluate_multi_path_strategy(
+        tf_data,
+        h1_data,
+        current_price,
+        agent_state.get("cpr", {}),
+        timeframes,
+    )
+    agent_state["decision_audit"] = audit
+
     if not LIVE_TRADING_ENABLED or agent_status != "RUNNING":
         return
 
@@ -388,19 +411,7 @@ def check_and_auto_trigger_trade(agent_state):
         return
 
     if mt5_account.get("open_positions", 0) > 0 or len(mt5_account.get("positions", [])) > 0:
-        return  
-
-    timeframes = agent_state.get("timeframes", {})
-    tf_data = timeframes.get("5m", {})
-    h1_data = timeframes.get("h1", {})
-    cpr = agent_state.get("cpr", {})
-    current_price = agent_state.get("current_price", 0.0)
-
-    if current_price <= 0 or not tf_data or not h1_data:
         return
-
-    action, audit = evaluate_multi_path_strategy(tf_data, h1_data, current_price, cpr, timeframes)
-    agent_state["decision_audit"] = audit
 
     if action:
         stop_buffer = 15.0  

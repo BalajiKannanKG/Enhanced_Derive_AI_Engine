@@ -28,6 +28,49 @@ class StartupSafetyTests(unittest.TestCase):
 
         make_directories.assert_not_called()
 
+    def test_decision_audit_updates_in_data_only_mode_without_dispatching(self):
+        state = {
+            "current_price": 100.0,
+            "cpr": {},
+            "timeframes": {
+                "5m": {
+                    "atr": 1.0,
+                    "adx": 20.0,
+                    "rsi": 10.0,
+                    "stoch_k_history": [10.0],
+                    "ema20": 99.0,
+                    "bb_upper": [110.0],
+                    "bb_lower": [90.0],
+                    "candles": [{
+                        "open": 100.0,
+                        "high": 100.5,
+                        "low": 99.5,
+                        "close": 100.0,
+                    }],
+                },
+                "h1": {"trend": "FLAT"},
+            },
+        }
+
+        with (
+            patch.object(engine, "LIVE_TRADING_ENABLED", False),
+            patch.object(engine, "agent_status", "DATA ONLY"),
+            patch.object(engine.mt5_bridge, "place_market_order") as place_order,
+        ):
+            engine.check_and_auto_trigger_trade(state)
+
+        self.assertEqual(state["decision_audit"]["consensus_score"], 35)
+        self.assertIn("Path D (Extreme Oversold Reversal)", state["decision_audit"]["active_paths"])
+        place_order.assert_not_called()
+
+    def test_decision_audit_reports_waiting_for_required_market_data(self):
+        state = {"current_price": 100.0, "timeframes": {"5m": {}, "h1": {}}}
+
+        engine.check_and_auto_trigger_trade(state)
+
+        self.assertEqual(state["decision_audit"]["regime"], "SCANNING")
+        self.assertIn("Waiting for complete 5m and 1h", state["decision_audit"]["reasoning"])
+
     def test_only_local_dashboard_origins_are_allowed_for_posts(self):
         handler = object.__new__(engine.CustomHTTPRequestHandler)
         handler.headers = Message()

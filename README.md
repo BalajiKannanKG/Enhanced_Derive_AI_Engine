@@ -113,8 +113,9 @@ are in memory and are not a durable market-data store.
 
 - **Default/data-only:** `LIVE_TRADING_ENABLED` is false and the displayed
   status starts at `DATA ONLY`. The Start control does not enable trading.
-  Automated trade management is disabled, and `/api/execute-trade` returns
-  HTTP 403.
+  The AI decision audit still calculates and displays strategy scores from
+  market data; automated trade management is disabled, and `/api/execute-trade`
+  returns HTTP 403.
 - **Live-capable run:** Start the process with `--enable-live-trading`. The
   already installed and logged-in MT5 terminal must permit Python/API trading.
   The dashboard must also be set to Start before manual order dispatch or
@@ -281,6 +282,18 @@ Then open [http://localhost:8080](http://localhost:8080). The default mode
 allows market-data streaming and dashboard access but does not enable order
 dispatch. Keep the terminal open to see connection and engine logs. Stop with
 **Ctrl+C** in that terminal.
+
+To start the engine independently of VS Code, double-click `start_dashboard.bat`
+in File Explorer. It uses this project's `.venv`, starts in data-only mode, and
+keeps its own console open for logs; open the dashboard at
+[http://localhost:8081](http://localhost:8081). Keep the console running and
+press **Ctrl+C** there to stop the engine. This launcher does not enable live
+trading.
+
+The MT5 Python integration still requires the installed terminal process.
+`mt5.initialize()` may open it when the engine starts; minimize the terminal
+window if you do not want it in the foreground. Data-only mode prevents order
+dispatch but does not disable read-only MT5 account telemetry.
 
 The installed console entry point can also be used:
 

@@ -15,19 +15,18 @@ that still need design or independent validation.
 
 ### Purpose
 
-The application connects to Deriv market data for the Volatility 10, 25, 50,
-and 100 indices (`R_10`, `R_25`, `R_50`, and `R_100`), calculates
+The application reads live quotes and historical candles for the Volatility 10,
+25, 50, and 100 indices from a locally running MetaTrader 5 terminal, calculates
 multi-timeframe indicators and strategy signals, and serves a local browser
 dashboard. The dashboard selector changes the displayed symbol; automated
-trading evaluates all four supported symbols. An optional direct connection
-sends requests to a locally running MetaTrader 5 terminal through the official
-Python package. The application does not require or install an Expert Advisor.
+trading evaluates all four supported symbols. The application uses the official
+MetaTrader5 Python package and does not require or install an Expert Advisor.
 
 ### Requirements captured so far
 
 | Area | Requirement / current decision |
 |---|---|
-| Market data | Deriv public WebSocket market data for `R_10`, `R_25`, `R_50`, and `R_100`; historical candles followed by per-symbol live ticks. |
+| Market data | MT5 candle history and per-symbol live bid quotes for the four supported volatility indices. |
 | Timeframes | 3m, 5m, 15m, 30m, 1h, 4h, and 1d. Request up to 300 historical candles per timeframe; keep recent candles in memory. |
 | Dashboard | Local live chart and indicators, market/strategy status, account/position display, manual order controls, day tracker, and trade log pages. |
 | Order routing | Optional direct order submission through the official MetaTrader5 Python API to an already installed, logged-in terminal. |
@@ -47,14 +46,15 @@ them before implementing a feature that changes trading behavior.
 `Enhanced_Derive_AI_Engine.py` is a single-process Python application with
 background threads for:
 
-1. A Deriv WebSocket client. On connection it requests candle history for each
-   configured granularity and all four supported symbols, then subscribes to
-   each symbol's live ticks. It retries after a disconnect with an increasing
-   delay.
-2. A heartbeat loop for the Deriv connection.
-3. A browser-facing WebSocket server on `127.0.0.1:8765` by default, which broadcasts
+1. An MT5 monitor that loads up to 300 historical candles per timeframe and
+   polls each supported symbol's live bid quote once per second.
+2. A browser-facing WebSocket server on `127.0.0.1:8765` by default, which broadcasts
    market and account state.
-4. An HTTP dashboard server on `127.0.0.1:8080` by default.
+3. An HTTP dashboard server on `127.0.0.1:8080` by default.
+
+The MT5 terminal must be running, logged in, connected to the broker, and have
+the four exact symbol names enabled. If historical candles are unavailable,
+the terminal may need to download more history for those symbols/timeframes.
 
 Set `DASHBOARD_PORT` to run a second local instance without taking over the
 default ports. Its browser WebSocket uses the next port (for example,
@@ -84,8 +84,8 @@ reverse proxy, or public tunnel.
 
 ### Market data and indicators
 
-The engine builds separate OHLC candle caches from Deriv history and live ticks
-for each supported symbol. It calculates
+The engine builds separate OHLC candle caches from MT5 history and live quotes
+for each supported symbol. Live chart updates use MT5 bid prices. It calculates
 EMA 20/30/100/200, RSI 14, ATR 14, ADX 14, Bollinger Bands (length 16, standard
 deviation 1.986), Stochastic (14,3), candle-pattern labels, previous-day open
 and close, and CPR pivot/support/resistance levels.
@@ -281,14 +281,13 @@ Direct runtime dependencies declared in `pyproject.toml`:
 |---|---|---|
 | `pandas` | OHLC time-series data and CSV loading | `>=2.0` |
 | `pandas-ta` | EMA, RSI, ATR, ADX, Bollinger Bands, and Stochastic indicators | Unpinned |
-| `websocket-client` | Deriv WebSocket client | Unpinned |
 | `websockets` | Browser-facing WebSocket server | Unpinned |
 | `MetaTrader5` | Direct local terminal API for account data, orders, position management, and deals | `>=5.0.45` |
 
 The package build also uses `setuptools>=61.0`. Installing the project pulls
 the compatible transitive dependencies. The versions installed and tested in
-this workspace included pandas 3.1.1, pandas-ta 0.4.71b0, websocket-client
-1.9.2, websockets 17.4, and NumPy 2.2.6. These are an observed environment
+this workspace included pandas 3.1.1, pandas-ta 0.4.71b0, websockets 17.4,
+and NumPy 2.2.6. These are an observed environment
 snapshot, **not pinned requirements**. There is no lock file yet; repeatable
 production installs need a deliberately maintained lock/constraints file.
 
@@ -420,15 +419,35 @@ orders. It writes a JSON summary and a CSV trade list. To test fewer symbols,
 pass `--symbols "Volatility 25 Index"` (or another supported symbol) before
 `--output`.
 
+#### Experimental scalping profile
+
+The optional `scalp` profile is a backtest-only experiment; it does not change
+live strategy settings. It enters on completed 5-minute candles, requires both
+completed 15-minute and 1-hour EMA trends to agree with the confluence signal,
+and uses a 1-ATR stop with a 2R target. Its multi-timeframe confluence uses
+5m/15m/1h trends (no 3-minute data), so the test can use the older 5-minute
+history available from MT5. It moves the stop to entry at +1R and starts a
+1-ATR trailing stop at +1.5R while retaining the 2R target. Reports include
+blocked signals, planned reward:risk, realized R-multiple, and calendar-day/
+active-day trade frequency. Override the score threshold for controlled
+experiments with `--min-consensus-score`. The 3–4 trades/day figure is a
+target to evaluate, not a guaranteed rate. This profile does not modify live
+auto-trading. Compare on separate out-of-sample history before considering
+live-strategy changes:
+
+```powershell
+.\.venv\Scripts\python.exe .\backtest.py --profile scalp --years 2 --balance 1000 --risk-percent 1 --output .\backtest_scalp_results
+```
+
 To confirm local listeners while the app runs:
 
 ```powershell
 Get-NetTCPConnection -State Listen -LocalPort 8080,8765
 ```
 
-Both should bind to `127.0.0.1`. A successful dashboard HTTP response does not
-prove Deriv is connected; check the terminal for the Deriv connection message
-and confirm live quotes/candles in the dashboard.
+Both should bind to `127.0.0.1`. Confirm the terminal reports MT5 as connected
+and that the dashboard shows MT5 quotes and candles. Deriv market-data WebSocket
+connections are no longer used.
 
 ## 6. Configuration and local files
 
@@ -438,7 +457,7 @@ and confirm live quotes/candles in the dashboard.
 | `MT5_SYMBOL` | Default dashboard symbol from the supported list; defaults to `Volatility 25 Index`. |
 | `MAX_RISK_PER_TRADE_PERCENT` | Maximum calculated stop-loss risk as a percentage of balance; default `1`. |
 | `MAX_DAILY_LOSS_PERCENT` | Daily realized-plus-floating loss threshold expressed as a percentage; default `2`. |
-| `credentials.json`, `token.pickle` | Local credential/token files; ignored by Git and not required for the current public market-data connection. |
+| `credentials.json`, `token.pickle` | Legacy local credential/token files; ignored by Git and not required for MT5 market data. |
 | `mt5_bridge.py` | Direct MT5 account, order, position-management, and history API integration. |
 | `agent_state.json` | Ignored legacy file; the HTTP route returns current in-memory state instead. |
 
@@ -475,8 +494,8 @@ default data-only mode and add tests with each trading-related change.
 
 ### Phase 3 — Connection recovery and diagnostics
 
-- Expose Deriv connection status, last tick/history timestamps, retry count,
-  and actionable errors in the dashboard.
+- Expose MT5 feed connection status, last tick/history timestamps, stale-feed
+  detection, and actionable errors in the dashboard.
 - Add bounded reconnect/backoff, stale-feed detection, graceful thread/server
   shutdown, and startup port-conflict reporting.
 - Avoid silent fallback to placeholder market values for decisions.

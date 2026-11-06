@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Actionable Multi-Symbol Trading Agent</title>
+    <title>MT5 Trading Desk | Multi-Symbol Market Intelligence</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
@@ -79,10 +79,10 @@
         .dashboard-grid > .card { min-width: 0; min-height: 0; }
         .right-column { display: grid; grid-template-rows: minmax(100px, 0.72fr) minmax(100px, 0.72fr) minmax(230px, 1.65fr); gap: 6px; min-width: 0; min-height: 0; }
         .right-column > .card { min-height: 0; overflow: hidden; }
-        .market-alerts { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(180px, 1.3fr) minmax(180px, 1.3fr) repeat(2, minmax(130px, 0.8fr)); gap: 6px; }
+        .market-alerts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, 1fr) 92px 92px; gap: 6px; }
         .market-alerts > * { min-width: 0; overflow-wrap: anywhere; }
         .market-alerts .signal-box { margin-top: 0; }
-        .market-trade-button { min-height: 22px; padding: 3px 6px; font-size: 0.62rem; }
+        .market-trade-button { min-height: 22px; padding: 3px 6px; font-size: 0.62rem; letter-spacing: 0.04em; }
         .market-trade-button:disabled { opacity: 0.45; cursor: not-allowed; }
         [hidden] { display: none !important; }
 
@@ -235,19 +235,575 @@
             .chart-legend-indicators { gap: 4px; }
             .price-chart-box, .oscillator-charts { min-height: 0; }
         }
+
+        :root {
+            color-scheme: dark;
+            --bg-color: #080d14;
+            --card-bg: #101923;
+            --accent-cyan: #62c5d8;
+            --accent-green: #35c995;
+            --accent-red: #f07178;
+            --accent-yellow: #e8b65b;
+            --accent-purple: #a88be8;
+            --accent-pink: #e28dbd;
+            --text-main: #e5edf5;
+            --text-muted: #8b9aaa;
+            --border-color: #243241;
+            --surface-raised: #141f2b;
+            --surface-soft: #0c141d;
+            --shadow-card: 0 12px 30px rgba(0, 0, 0, 0.18);
+        }
+
+        [data-theme="light"] {
+            color-scheme: light;
+            --bg-color: #f3f6f9;
+            --card-bg: #ffffff;
+            --accent-cyan: #087f9a;
+            --accent-green: #07875d;
+            --accent-red: #c84952;
+            --accent-yellow: #a66c0b;
+            --accent-purple: #7251b5;
+            --accent-pink: #b94d85;
+            --text-main: #172433;
+            --text-muted: #657587;
+            --border-color: #dce4ec;
+            --surface-raised: #f8fafc;
+            --surface-soft: #eef3f7;
+            --shadow-card: 0 10px 24px rgba(30, 50, 70, 0.07);
+        }
+
+        html, body {
+            background:
+                radial-gradient(ellipse at 10% -15%, rgba(52, 126, 145, 0.13), transparent 38%),
+                var(--bg-color);
+            color: var(--text-main);
+            font-family: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+        }
+
+        body {
+            width: min(100%, 1920px);
+            min-height: 100vh;
+            height: auto;
+            margin-inline: auto;
+            padding: 22px clamp(16px, 2.2vw, 36px) 32px;
+            gap: 16px;
+            overflow: auto;
+        }
+
+        header {
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            min-height: 72px;
+            margin: -22px calc(clamp(16px, 2.2vw, 36px) * -1) 0;
+            padding: 12px clamp(16px, 2.2vw, 36px);
+            border-bottom: 1px solid var(--border-color);
+            background: color-mix(in srgb, var(--bg-color) 88%, transparent);
+            backdrop-filter: blur(18px);
+        }
+
+        h1 {
+            color: var(--text-main);
+            font-size: clamp(1.05rem, 1.5vw, 1.4rem);
+            font-weight: 650;
+            letter-spacing: -0.035em;
+            gap: 12px;
+        }
+
+        .brand-mark {
+            display: grid;
+            width: 38px;
+            height: 38px;
+            place-items: center;
+            border: 1px solid rgba(98, 197, 216, 0.35);
+            border-radius: 12px;
+            background: linear-gradient(145deg, rgba(98, 197, 216, 0.2), rgba(98, 197, 216, 0.04));
+            color: var(--accent-cyan);
+            font-size: 1.25rem;
+        }
+
+        .brand-copy { display: grid; gap: 3px; }
+        .brand-copy small {
+            color: var(--text-muted);
+            font-size: 0.68rem;
+            font-weight: 450;
+            letter-spacing: 0.02em;
+        }
+
+        .live-price-tag {
+            padding: 7px 11px;
+            border-color: rgba(98, 197, 216, 0.28);
+            border-radius: 9px;
+            background: rgba(98, 197, 216, 0.09);
+            font-size: 0.76rem;
+            white-space: nowrap;
+        }
+
+        .header-actions { display: flex; align-items: center; gap: 10px; }
+        .badge {
+            padding: 6px 9px;
+            border-radius: 8px;
+            background: var(--surface-raised);
+            color: var(--text-muted);
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+
+        .symbol-select, .theme-btn {
+            min-height: 38px;
+            padding: 8px 11px;
+            border: 1px solid var(--border-color);
+            border-radius: 9px;
+            background: var(--surface-raised);
+            color: var(--text-main);
+            font-size: 0.78rem;
+        }
+
+        .theme-btn { cursor: pointer; }
+        .symbol-select:focus-visible, .theme-btn:focus-visible, button:focus-visible, .tf-link:focus-visible {
+            outline: 2px solid var(--accent-cyan);
+            outline-offset: 2px;
+        }
+
+        .macro-bar { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; }
+        .matrix-card {
+            min-height: 82px;
+            justify-content: center;
+            gap: 7px;
+            padding: 11px 12px;
+            border-radius: 12px;
+            background: linear-gradient(145deg, var(--card-bg), var(--surface-soft));
+            box-shadow: var(--shadow-card);
+        }
+        .matrix-title { font-size: 0.68rem; letter-spacing: 0.1em; }
+        .matrix-status { font-size: 0.8rem; }
+        .matrix-timer { width: fit-content; margin-inline: auto; padding: 3px 8px; border-radius: 6px; font-size: 0.68rem; }
+
+        .top-grid { gap: 10px; }
+        .card {
+            padding: 18px;
+            gap: 10px;
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            background: linear-gradient(145deg, var(--card-bg), color-mix(in srgb, var(--card-bg) 88%, var(--surface-soft)));
+            box-shadow: var(--shadow-card);
+        }
+        .card h3 {
+            margin-bottom: 4px;
+            padding-bottom: 11px;
+            border-bottom-color: var(--border-color);
+            color: var(--text-main);
+            font-size: 0.9rem;
+            font-weight: 650;
+            letter-spacing: -0.01em;
+        }
+
+        .account-card { padding: 14px 18px !important; border-color: var(--border-color) !important; }
+        .account-card h3 { margin-bottom: 4px !important; }
+        .account-metrics { gap: 10px 24px; }
+        .account-metrics .metric-row { justify-content: space-between; font-size: 0.78rem; }
+        .account-metrics .metric-row > span:first-child { color: var(--text-muted); }
+        .account-metrics .metric-value { font-size: 0.86rem; }
+
+        .market-alerts {
+            grid-template-columns: minmax(170px, 1fr) minmax(190px, 1.15fr) minmax(160px, 1fr) repeat(2, minmax(150px, 0.8fr));
+            gap: 10px;
+            align-items: stretch;
+        }
+        .market-alerts > * {
+            min-height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 10px 14px !important;
+            border-radius: 10px !important;
+            font-size: 0.76rem !important;
+        }
+        .market-alerts .signal-box { margin-top: 0; }
+        .market-trade-button { font-size: 0.78rem !important; }
+        .btn-start, .btn-stop { transition: filter 0.18s ease, transform 0.18s ease; }
+        .btn-start:hover:not(:disabled), .btn-stop:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); }
+
+        .dashboard-grid {
+            grid-template-columns: minmax(0, 1.45fr) minmax(390px, 0.9fr);
+            align-items: stretch;
+            gap: 14px;
+            flex: initial;
+            height: auto;
+        }
+        .dashboard-grid > .card { height: auto !important; min-height: min(74vh, 790px); }
+        .right-column {
+            grid-template-rows: minmax(150px, 0.75fr) minmax(150px, 0.75fr) minmax(320px, 1.5fr);
+            gap: 14px;
+            height: auto;
+            overflow: visible;
+        }
+        .right-column > .card { min-height: 0; overflow: visible; }
+        .chart-metrics {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 8px;
+            padding: 10px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            background: var(--surface-soft);
+        }
+        .chart-metrics .metric-row {
+            display: grid;
+            gap: 4px;
+            margin: 0;
+            font-size: 0.66rem;
+        }
+        .chart-metrics .metric-row > span:first-child { color: var(--text-muted); }
+        .chart-metrics .metric-value { text-align: left; font-size: 0.8rem; }
+        .price-chart-box { min-height: 330px; }
+        .oscillator-charts { min-height: 105px; gap: 12px; }
+        .chart-box { margin-top: 4px; }
+        .tf-links-container { gap: 5px; }
+        .tf-link {
+            padding: 6px 9px;
+            border-radius: 7px;
+            font-size: 0.68rem;
+        }
+        .tf-link.active { background: rgba(98, 197, 216, 0.12); }
+        .btn-tool { padding: 6px 9px; border-radius: 7px; font-size: 0.66rem; }
+        .countdown-badge-lg { padding: 6px 9px; border-radius: 7px; font-size: 0.7rem; }
+        .chart-legend { padding-top: 9px; font-size: 0.66rem; }
+        .chart-legend-indicators { gap: 12px; }
+
+        .right-column .metric-row { margin: 5px 0; font-size: 0.75rem; }
+        .prediction-panel { background: linear-gradient(145deg, var(--card-bg), rgba(98, 197, 216, 0.045)); border-color: var(--border-color); }
+        .sr-alert-pill { padding: 7px 10px; border-radius: 8px; font-size: 0.7rem; }
+        .forecast-grid { gap: 8px; }
+        .forecast-box { min-height: 88px; padding: 8px; border-radius: 9px; }
+        .forecast-step { font-size: 0.64rem; }
+        .forecast-pattern { font-size: 0.66rem; }
+        .confluence-side-box { gap: 10px; }
+        .confluence-card-sm { padding: 10px; border-radius: 10px; background: var(--surface-soft); }
+        .confluence-card-sm h4 { padding-bottom: 8px; font-size: 0.75rem; }
+        .confluence-item { margin: 4px 0; padding: 6px 7px; border-radius: 6px; font-size: 0.67rem; }
+        .status-light { padding: 3px 6px; border-radius: 5px; font-size: 0.62rem; }
+        .trade-exec-card { padding: 12px; border-radius: 10px; }
+        .exec-row { margin: 5px 0; font-size: 0.72rem; }
+        .btn-trade-confirm { margin-top: 8px; padding: 10px; border-radius: 8px; font-size: 0.75rem; }
+        #audit-reasoning { max-height: 90px !important; padding: 8px !important; border-radius: 8px !important; }
+
+        .price-chart-box { overflow: hidden; border-radius: 10px; background: var(--surface-soft); }
+        .oscillator-charts .chart-box { min-height: 0; overflow: hidden; }
+        .oscillator-charts .chart-box canvas { height: 100% !important; }
+        #priceChart {
+            border-radius: 10px;
+            background: linear-gradient(180deg, rgba(8, 127, 154, 0.035), transparent 34%);
+        }
+
+        @media (max-width: 1100px) {
+            body { padding-inline: 16px; }
+            .dashboard-grid { grid-template-columns: minmax(0, 1.2fr) minmax(340px, 0.9fr); }
+            .right-column { grid-template-rows: minmax(150px, auto) minmax(160px, auto) minmax(320px, auto); }
+        }
+
+        @media (max-width: 760px) {
+            body { padding: 12px; gap: 12px; }
+            header {
+                position: static;
+                margin: -12px -12px 0;
+                padding: 12px;
+                align-items: flex-start;
+            }
+            header > div { flex-wrap: wrap; justify-content: flex-end; }
+            h1 { font-size: 1rem; }
+            .brand-mark { width: 32px; height: 32px; }
+            .brand-copy small { display: none; }
+            .live-price-tag { white-space: normal; }
+            .macro-bar { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
+            .matrix-card { min-height: 70px; padding: 8px; }
+            .account-metrics { grid-template-columns: 1fr; gap: 8px; }
+            .market-alerts { grid-template-columns: 1fr 1fr; }
+            .market-alerts .signal-box { grid-column: 1 / -1; }
+            .dashboard-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+            .dashboard-grid > .card { min-height: 620px; }
+            .right-column { display: flex; flex-direction: column; gap: 12px; }
+            .right-column > .card { flex: none !important; min-height: auto; overflow: visible; }
+            .chart-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .price-chart-box { min-height: 300px; }
+            .oscillator-charts { min-height: 120px; }
+            .tf-links-container { flex-wrap: wrap; }
+        }
+
+        @media (max-width: 480px) {
+            header { flex-direction: column; }
+            header > div { justify-content: flex-start; }
+            .macro-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .market-alerts { grid-template-columns: 1fr; }
+            .market-alerts .signal-box { grid-column: auto; }
+            .dashboard-grid > .card { padding: 13px; }
+            .dashboard-grid > .card > h3 { align-items: flex-start; flex-direction: column; gap: 10px; }
+            .confluence-side-box { grid-template-columns: 1fr; }
+            .price-chart-box { min-height: 250px; }
+        }
+
+        @media (min-width: 1001px) and (min-height: 680px) {
+            body {
+                height: 100vh;
+                height: 100dvh;
+                min-height: 0;
+                overflow: hidden;
+                padding-top: 12px;
+                padding-bottom: 12px;
+                gap: 10px;
+            }
+            header {
+                position: relative;
+                flex: 0 0 58px;
+                min-height: 58px;
+                margin: -12px calc(clamp(16px, 2.2vw, 36px) * -1) 0;
+                padding-top: 8px;
+                padding-bottom: 8px;
+            }
+            .macro-bar { flex: 0 0 66px; gap: 8px; }
+            .matrix-card { min-height: 0; gap: 4px; padding: 6px 10px; }
+            .top-grid { flex: 0 0 auto; }
+            .account-card { padding: 9px 14px !important; }
+            .account-card h3 { padding-bottom: 5px; }
+            .account-metrics { gap: 6px 18px; }
+            .account-metrics .metric-row { font-size: 0.7rem; }
+            .market-alerts { flex: 0 0 42px; gap: 8px; }
+            .market-alerts > * { min-height: 42px; padding: 6px 10px !important; }
+            .dashboard-grid {
+                flex: 1 1 0;
+                height: 0;
+                min-height: 0;
+                gap: 10px;
+                grid-template-columns: minmax(0, 1.45fr) minmax(390px, 0.9fr);
+            }
+            .dashboard-grid > .card { min-height: 0; padding: 12px; }
+            .right-column {
+                display: grid;
+                height: 100%;
+                min-height: 0;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                grid-template-rows: minmax(0, 0.72fr) minmax(0, 1.28fr);
+                gap: 10px;
+                overflow: hidden;
+            }
+            .right-column > .card { min-height: 0; overflow: auto; padding: 10px; }
+            .right-column > .prediction-panel { grid-column: 1; grid-row: 1; }
+            .right-column > .decision-audit-card { grid-column: 2; grid-row: 1; }
+            .right-column > .confluence-panel { grid-column: 1 / -1; grid-row: 2; }
+            .right-column .card h3 { padding-bottom: 7px; }
+            .right-column .metric-row { margin: 3px 0; font-size: 0.64rem; }
+            .right-column .prediction-panel { gap: 4px; }
+            .right-column .prediction-panel h3 { margin-bottom: 0; padding-bottom: 4px; font-size: 0.68rem; line-height: 1.2; }
+            .right-column .sr-alert-pill { margin-bottom: 0; padding: 2px 5px; }
+            .right-column .forecast-summary { gap: 2px; }
+            .right-column .forecast-summary .metric-row { margin: 0; font-size: 0.62rem; }
+            .right-column .forecast-grid { gap: 4px; margin-top: 0; }
+            .right-column .forecast-box { min-height: 0; padding: 3px; justify-content: center; gap: 1px; }
+            .right-column .forecast-step { font-size: 0.5rem; line-height: 1.1; }
+            .right-column .forecast-pattern { margin-top: 0; font-size: 0.53rem; line-height: 1.1; }
+            .right-column .forecast-box canvas { height: 20px; }
+            .right-column .forecast-box > div:last-child { white-space: nowrap; font-size: 0.4rem !important; }
+            .right-column .confluence-card-sm { padding: 5px; }
+            .right-column .confluence-card-sm h4 { padding-bottom: 3px; font-size: 0.64rem; }
+            .right-column .confluence-item { margin: 1px 0; padding: 1px 2px; font-size: 0.54rem; line-height: 1.15; }
+            .right-column .status-light { padding: 1px 3px; font-size: 0.49rem; }
+            .right-column .trade-exec-card { padding: 6px; }
+            .right-column .exec-row { margin: 2px 0; font-size: 0.59rem; }
+            .right-column .btn-trade-confirm { margin-top: 4px; padding: 5px; }
+            .decision-audit-card { gap: 4px; }
+            .decision-audit-card h3 { font-size: 0.7rem; }
+            .decision-audit-card .metric-row { margin: 0; }
+            .decision-audit-card #audit-paths { min-height: 12px !important; margin-bottom: 0 !important; }
+            .decision-audit-card #audit-reasoning { max-height: 34px !important; padding: 3px !important; font-size: 0.54rem !important; }
+            .price-chart-box { min-height: 0; }
+            .oscillator-charts { min-height: 72px; }
+            .chart-metrics { padding: 7px 10px; }
+            .card > h3 { padding-bottom: 7px; }
+        }
+
+        @media (min-width: 761px) and (max-height: 679px) {
+            body {
+                height: 100vh;
+                height: 100dvh;
+                min-height: 0;
+                padding: 6px 12px;
+                gap: 5px;
+                overflow: hidden;
+            }
+            header {
+                position: relative;
+                flex: 0 0 38px;
+                min-height: 38px;
+                margin: -6px -12px 0;
+                padding: 3px 12px;
+            }
+            h1 { gap: 8px; font-size: 0.95rem; }
+            .brand-mark { width: 30px; height: 30px; border-radius: 9px; }
+            .brand-copy { gap: 0; }
+            .brand-copy small { font-size: 0.58rem; }
+            .live-price-tag { padding: 4px 7px; font-size: 0.66rem; }
+            .header-actions { gap: 5px; }
+            .header-actions .badge, .symbol-select, .theme-btn { min-height: 30px; padding: 4px 7px; font-size: 0.62rem; }
+            .macro-bar {
+                flex: 0 0 42px;
+                grid-template-columns: repeat(7, minmax(0, 1fr));
+                gap: 5px;
+            }
+            .matrix-card { min-height: 0; gap: 1px; padding: 2px 4px; border-radius: 8px; }
+            .matrix-title { font-size: 0.54rem; }
+            .matrix-status { padding: 0; font-size: 0.61rem; }
+            .matrix-timer { padding: 1px 5px; font-size: 0.52rem; }
+            .top-grid { flex: 0 0 auto; gap: 3px; }
+            .account-card { padding: 3px 8px !important; gap: 2px; }
+            .account-card h3 { margin: 0 !important; padding-bottom: 2px; font-size: 0.68rem; }
+            .account-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px 8px; }
+            .account-metrics .metric-row { gap: 4px; font-size: 0.57rem; }
+            .account-metrics .metric-value { font-size: 0.62rem; }
+            .account-card .badge { padding: 3px 5px; font-size: 0.52rem; }
+            .market-alerts {
+                flex: 0 0 30px;
+                grid-template-columns: minmax(120px, 1fr) minmax(130px, 1.15fr) minmax(120px, 1fr) repeat(2, minmax(112px, 0.8fr));
+                gap: 3px;
+            }
+            .market-alerts > * {
+                min-height: 30px;
+                padding: 3px 5px !important;
+                border-radius: 7px !important;
+                font-size: 0.59rem !important;
+            }
+            .dashboard-grid {
+                flex: 1 1 0;
+                height: 0;
+                min-height: 0;
+                grid-template-columns: minmax(0, 1.35fr) minmax(330px, 0.95fr);
+                gap: 6px;
+            }
+            .dashboard-grid > .card { min-height: 0; padding: 7px; gap: 5px; }
+            .dashboard-grid > .card > h3 {
+                margin: 0;
+                padding-bottom: 4px;
+                font-size: 0.7rem;
+            }
+            .tf-links-container { gap: 2px; }
+            .tf-link, .btn-tool, .countdown-badge-lg { padding: 3px 5px; font-size: 0.52rem; }
+            .chart-metrics { gap: 3px; padding: 4px 6px; }
+            .chart-metrics .metric-row { gap: 1px; font-size: 0.5rem; }
+            .chart-metrics .metric-value { font-size: 0.58rem; }
+            .price-chart-box { min-height: 0; }
+            .oscillator-labels {
+                display: flex;
+                flex: 0 0 8px;
+                height: 8px;
+                margin: 0 !important;
+                font-size: 0.43rem !important;
+            }
+            .oscillator-charts {
+                display: grid;
+                flex: 0 0 58px;
+                min-height: 58px;
+                gap: 4px;
+            }
+            .oscillator-charts .chart-box { min-height: 0 !important; height: 58px; }
+            .oscillator-charts .chart-box canvas { height: 58px !important; }
+            .chart-legend { margin: 0; padding-top: 3px; font-size: 0.48rem; }
+            .chart-legend-indicators { gap: 5px; }
+            .right-column {
+                display: grid;
+                height: 100%;
+                min-height: 0;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                grid-template-rows: minmax(0, 0.62fr) minmax(0, 1.38fr);
+                gap: 6px;
+                overflow: hidden;
+            }
+            .right-column > .card { min-height: 0; padding: 5px; gap: 2px; overflow: hidden; }
+            .right-column > .confluence-panel { padding-bottom: 3px; }
+            .right-column > .prediction-panel { grid-column: 1; grid-row: 1; }
+            .right-column > .decision-audit-card { grid-column: 2; grid-row: 1; }
+            .right-column > .confluence-panel { grid-column: 1 / -1; grid-row: 2; }
+            .right-column .card h3 { margin: 0; padding-bottom: 2px; font-size: 0.52rem; line-height: 1.05; }
+            .right-column .metric-row { margin: 1px 0; font-size: 0.52rem; }
+            .right-column .prediction-panel h3 { font-size: 0.5rem; }
+            .right-column .sr-alert-pill { margin: 0; padding: 1px 3px; font-size: 0.43rem; }
+            .right-column .forecast-summary { gap: 1px; }
+            .right-column .forecast-summary .metric-row { margin: 0; font-size: 0.43rem; }
+            .right-column .forecast-grid { gap: 2px; margin: 0; min-height: 0; }
+            .right-column .forecast-box { min-height: 0; padding: 2px; gap: 0; justify-content: center; }
+            .right-column .forecast-step { font-size: 0.38rem; line-height: 1; }
+            .right-column .forecast-pattern { margin: 0; font-size: 0.39rem; line-height: 1; }
+            .right-column .forecast-box canvas { height: 10px; }
+            .right-column .forecast-box > div:last-child { white-space: nowrap; font-size: 0.31rem !important; }
+            .decision-audit-card { gap: 1px; }
+            .decision-audit-card h3 { font-size: 0.48rem !important; }
+            .decision-audit-card .metric-row { margin: 0; font-size: 0.45rem; }
+            .decision-audit-card #audit-paths { min-height: 6px !important; margin: 0 !important; font-size: 0.42rem !important; line-height: 1 !important; }
+            .decision-audit-card #audit-reasoning { max-height: 17px !important; min-height: 0; padding: 1px !important; font-size: 0.4rem !important; line-height: 1 !important; }
+            .right-column .confluence-side-box { gap: 3px; margin: 0; }
+            .right-column .confluence-card-sm { padding: 2px; }
+            .right-column .confluence-card-sm h4 { margin: 0 0 1px; padding-bottom: 1px; font-size: 0.46rem; line-height: 1; }
+            .right-column .confluence-item { margin: 1px 0; padding: 1px 2px; font-size: 0.5rem; line-height: 1.1; }
+            .right-column .status-light { padding: 1px 3px; font-size: 0.43rem; line-height: 1.1; }
+            .right-column .trade-exec-card { margin: 0; padding: 2px; }
+            .right-column .exec-row { margin: 0; font-size: 0.42rem; line-height: 1; }
+            .right-column .btn-trade-confirm { margin: 1px 0 0; padding: 2px; font-size: 0.42rem; line-height: 1; }
+        }
+
+        @media (min-width: 761px) {
+            .market-alerts { flex: 0 0 28px; gap: 5px; }
+            .market-alerts > * {
+                min-height: 22px;
+                padding: 2px 6px !important;
+                border-radius: 7px !important;
+                box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+            }
+            .market-alerts #val-signal { font-size: 0.58rem; }
+            .market-alerts #tf-squeeze-state,
+            .market-alerts #tf-breakout-alert {
+                font-size: 0.58rem !important;
+                line-height: 1.15;
+            }
+            .market-alerts #tf-squeeze-state { box-shadow: 0 0 10px rgba(245, 158, 11, 0.22); }
+            .market-alerts #tf-breakout-alert { box-shadow: 0 0 10px rgba(6, 182, 212, 0.2); }
+            .market-alerts .market-trade-button {
+                min-height: 22px;
+                padding: 2px 5px;
+                border: 1px solid currentColor;
+                box-shadow: 0 0 10px rgba(16, 185, 129, 0.2);
+                font-size: 0.58rem;
+            }
+            .market-alerts .market-trade-button.btn-stop { box-shadow: 0 0 10px rgba(239, 68, 68, 0.2); }
+            .market-alerts .market-trade-button:disabled { filter: saturate(0.65); }
+        }
+
+        @media (min-width: 761px) and (max-height: 679px) {
+            .market-alerts {
+                flex-basis: 22px;
+                gap: 4px;
+                grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, 1fr) 78px 78px;
+            }
+            .market-alerts > * { min-height: 18px; padding: 1px 5px !important; }
+            .market-alerts .market-trade-button { min-height: 18px; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+        }
     </style>
 </head>
 <body data-theme="light">
 
     <header>
-        <h1>🎯 AI Executive Trading Room <span id="livePriceDisplay" class="live-price-tag">Symbol: ---</span></h1>
-        <div style="display: flex; align-items: center; gap: 6px;">
+        <h1>
+            <span class="brand-mark" aria-hidden="true">↗</span>
+            <span class="brand-copy">MT5 Trading Desk<small>Multi-symbol market intelligence</small></span>
+            <span id="livePriceDisplay" class="live-price-tag">MT5 · Symbol: ---</span>
+        </h1>
+        <div class="header-actions">
             <label for="symbol-selector" class="badge">Symbol</label>
             <select id="symbol-selector" class="symbol-select" onchange="selectTradingSymbol(this.value)">
                 <option>Loading symbols...</option>
             </select>
-            <button class="theme-btn" onclick="toggleTheme()" id="themeToggleBtn">☀️ Light</button>
-            <div class="badge" id="last-update">Syncing...</div>
+            <button class="theme-btn" onclick="toggleTheme()" id="themeToggleBtn" aria-label="Toggle color theme">☀️ Light</button>
+            <div class="badge" id="last-update" role="status">Syncing...</div>
         </div>
     </header>
 
@@ -292,8 +848,8 @@
         <div class="signal-box signal-hold" id="val-signal">HOLD / SCANNING</div>
         <div id="tf-squeeze-state" style="font-size: 0.72rem; font-weight: bold; text-align: center; padding: 2px; border-radius: 3px; background: rgba(245, 158, 11, 0.15); border: 1px solid var(--accent-yellow); color: var(--accent-yellow);">🟡 CONSOLIDATION (Squeeze)</div>
         <div id="tf-breakout-alert" style="font-size: 0.72rem; font-weight: bold; text-align: center; padding: 2px; border-radius: 3px; background: rgba(6, 182, 212, 0.15); border: 1px solid var(--accent-cyan); color: var(--accent-cyan);">⚡ STANDBY</div>
-        <button class="btn btn-start market-trade-button" onclick="executeManualTrade('BUY', this)" disabled>🟢 MANUAL BUY</button>
-        <button class="btn btn-stop market-trade-button" onclick="executeManualTrade('SELL', this)" disabled>🔴 MANUAL SELL</button>
+        <button class="btn btn-start market-trade-button" aria-label="Manual buy" title="Manual buy" onclick="executeManualTrade('BUY', this)" disabled>▲ BUY</button>
+        <button class="btn btn-stop market-trade-button" aria-label="Manual sell" title="Manual sell" onclick="executeManualTrade('SELL', this)" disabled>▼ SELL</button>
     </div>
 
     <div class="dashboard-grid">
@@ -328,7 +884,7 @@
                 <canvas id="priceChart"></canvas>
             </div>
 
-            <div style="font-size: 0.55rem; color: var(--text-muted); margin-top:2px; display:flex; justify-content:space-between;">
+            <div class="oscillator-labels" style="font-size: 0.55rem; color: var(--text-muted); margin-top:2px; display:flex; justify-content:space-between;">
                 <span>RSI (10) [OB: 85 / OS: 15]</span>
                 <span style="color: var(--accent-pink);">Stochastic (%K 16, %D 3)</span>
             </div>
@@ -344,7 +900,8 @@
                     <span style="color:var(--accent-purple)">● EMA200</span>
                     <span style="color:#ec4899; font-weight:bold;">--- BB Upper</span>
                     <span style="color:#8b5cf6; font-weight:bold;">--- BB Lower</span>
-                    <span style="color:#FF8C00; font-weight:bold;">▬ Prev Open/Close</span>
+                    <span style="color:#b7791f; font-weight:bold;">- - Prev Day Open</span>
+                    <span style="color:#2877a8; font-weight:bold;">- - Prev Day Close</span>
                 </div>
             </div>
         </div>
@@ -404,8 +961,8 @@
                 </div>
             </div>
                     <!-- Decision Audit & Strategy Reasoning Card -->
-                    <div class="card" style="border-color: var(--accent-cyan); flex: 1.2; min-height: 0;">
-                        <h3>🎯 AI Decision Audit & Strategy Matrix</h3>
+                    <div class="card decision-audit-card" style="border-color: var(--accent-cyan); flex: 1.2; min-height: 0;">
+                        <h3>🎯 Strategy Audit & Reasoning</h3>
                         <div class="metric-row"><span>Market Regime:</span> <span class="metric-value" id="audit-regime" style="color:var(--accent-cyan);">---</span></div>
                         <div class="metric-row"><span>Consensus Score:</span> <span class="metric-value" id="audit-score">0</span></div>
                         <div style="font-size: 0.6rem; color: var(--text-muted); margin-top: 3px;">Active Paths:</div>
@@ -414,7 +971,7 @@
                         <div id="audit-reasoning" style="font-size: 0.6rem; background: rgba(0,0,0,0.03); border: 1px solid var(--border-color); padding: 3px; border-radius: 3px;                                  max-height: 35px; overflow-y: auto;">Initializing decision matrix...</div>
                     </div>
             <!-- Confluence Matrix & Manual Controls -->
-            <div class="card" style="border-color: var(--accent-purple); flex: 1.35; min-height: 0;">
+            <div class="card confluence-panel" style="border-color: var(--accent-purple); flex: 1.35; min-height: 0;">
                 <h3>🚦 Confluence Checklists & Manual Controls</h3>
                 <div class="confluence-side-box">
                     <!-- BUY Confluences -->
@@ -582,14 +1139,22 @@
 
         function updateChartThemeColors() {
             const isDark = document.body.getAttribute('data-theme') === 'dark';
-            const gridColor = isDark ? '#1e293b' : '#cbd5e1';
-            const textColor = isDark ? '#94a3b8' : '#64748b';
+            const gridColor = isDark ? 'rgba(126, 148, 166, 0.13)' : 'rgba(91, 112, 132, 0.13)';
+            const textColor = isDark ? '#91a5b7' : '#687b8d';
 
             [priceChartInstance, rsiChartInstance, stochChartInstance].forEach(chart => {
                 if (!chart) return;
-                if (chart.options.scales.y) {
-                    chart.options.scales.y.grid.color = gridColor;
-                    chart.options.scales.y.ticks.color = textColor;
+                Object.values(chart.options.scales).forEach(scale => {
+                    if (scale.grid) scale.grid.color = gridColor;
+                    if (scale.ticks) scale.ticks.color = textColor;
+                });
+                if (chart === priceChartInstance) {
+                    const colors = isDark
+                        ? ['#c59b43', '#c59b43', '#c979a2', 'rgba(217, 166, 76, 0.45)', '#8e80c7', '#59bfd0', '#d9a64c', '#a58bd8']
+                        : ['#9a6b0b', '#9a6b0b', '#b94d85', 'rgba(166, 108, 11, 0.38)', '#7251b5', '#087f9a', '#a66c0b', '#7251b5'];
+                    colors.forEach((color, index) => {
+                        chart.data.datasets[index + 1].borderColor = color;
+                    });
                 }
                 chart.update('none');
             });
@@ -1078,12 +1643,12 @@
                 
                 if (globalData.current_price) {
                     currentLivePrice = globalData.current_price;
-                    const derivSymbol = globalData.deriv_symbol || selectedSymbol;
+                    const marketDataSource = globalData.market_data_source || "MT5";
                     const digits = Number.isInteger(Number(globalData.mt5_symbol?.digits))
                         ? Number(globalData.mt5_symbol.digits)
                         : 3;
                     document.getElementById('livePriceDisplay').innerText =
-                        `${selectedSymbol} (${derivSymbol}): ${currentLivePrice.toFixed(digits)}`;
+                        `${selectedSymbol} (${marketDataSource}): ${currentLivePrice.toFixed(digits)}`;
 
                     const foundKey = Object.keys(globalData.timeframes).find(k => k.toLowerCase() === selectedTimeframe.toLowerCase());
                     const tf = foundKey ? globalData.timeframes[foundKey] : null;
@@ -1107,9 +1672,9 @@
                         }
                     } else {
                         currentLivePrice = 0;
-                        const derivSymbol = globalData.deriv_symbol || selectedSymbol;
+                        const marketDataSource = globalData.market_data_source || "MT5";
                         document.getElementById('livePriceDisplay').innerText =
-                            `${selectedSymbol} (${derivSymbol}): ---`;
+                            `${selectedSymbol} (${marketDataSource}): ---`;
                     }
                 }
 
@@ -1330,11 +1895,24 @@
 
         const solidCandlePlugin = {
             id: 'solidCandlePlugin',
+            beforeDraw(chart) {
+                if (chart.canvas.id !== 'priceChart' || !chart.chartArea) return;
+                const {ctx, chartArea} = chart;
+                const gradient = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+                const isDark = document.body.getAttribute('data-theme') === 'dark';
+                gradient.addColorStop(0, isDark ? 'rgba(25, 43, 55, 0.66)' : 'rgba(237, 246, 249, 0.92)');
+                gradient.addColorStop(1, isDark ? 'rgba(12, 20, 29, 0.28)' : 'rgba(255, 255, 255, 0.78)');
+                ctx.save();
+                ctx.fillStyle = gradient;
+                ctx.fillRect(chartArea.left, chartArea.top, chartArea.width, chartArea.height);
+                ctx.restore();
+            },
             afterDatasetsDraw(chart) {
                 const dataset = chart.data.datasets[0];
                 if (!dataset || dataset.label !== 'Solid_Candles' || !dataset.ohlcData) return;
 
                 const ctx = chart.ctx;
+                const chartArea = chart.chartArea;
                 const xAxis = chart.scales.x;
                 const yAxis = chart.scales.y;
                 const candles = dataset.ohlcData;
@@ -1399,43 +1977,128 @@
                     if ([openY, highY, lowY, closeY].some(v => v === undefined || isNaN(v))) return;
 
                     const isBullish = c.close >= c.open;
-                    const color = isBullish ? '#10b981' : '#ef4444';
+                    const color = isDark
+                        ? (isBullish ? '#35c995' : '#f07178')
+                        : (isBullish ? '#07875d' : '#c84952');
 
                     ctx.beginPath();
                     ctx.strokeStyle = color;
-                    ctx.lineWidth = 2;
+                    ctx.lineWidth = 1.35;
                     ctx.moveTo(x, highY);
                     ctx.lineTo(x, lowY);
                     ctx.stroke();
 
                     const bodyTop = Math.min(openY, closeY);
                     const bodyHeight = Math.max(Math.abs(openY - closeY), 2);
-                    const barWidth = Math.max(3, (chart.chartArea.width / candles.length) * 0.85);
+                    const barWidth = Math.max(2, Math.min(9, (chart.chartArea.width / candles.length) * 0.76));
 
                     ctx.fillStyle = color;
                     ctx.fillRect(x - barWidth / 2, bodyTop, barWidth, bodyHeight);
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 0.65;
+                    ctx.strokeRect(x - barWidth / 2, bodyTop, barWidth, bodyHeight);
                 });
 
+                const priceDigits = Number.isInteger(Number(globalData?.mt5_symbol?.digits))
+                    ? Number(globalData.mt5_symbol.digits)
+                    : 3;
+                const previousDayLevels = [
+                    { label: 'PD OPEN', value: Number(dataset.prevDayOpen), color: isDark ? '#e5b454' : '#a76108', dash: [2, 3] },
+                    { label: 'PD CLOSE', value: Number(dataset.prevDayClose), color: isDark ? '#69b8ec' : '#176b9b', dash: [6, 3] },
+                ].filter(level => Number.isFinite(level.value));
+                const outOfRangeSlots = { above: 0, below: 0 };
+
+                previousDayLevels.forEach(level => {
+                    const isAbove = level.value > yAxis.max;
+                    const isBelow = level.value < yAxis.min;
+                    const isInRange = !isAbove && !isBelow;
+                    const slot = isAbove ? outOfRangeSlots.above++ : isBelow ? outOfRangeSlots.below++ : 0;
+                    const y = isInRange
+                        ? yAxis.getPixelForValue(level.value)
+                        : isAbove
+                            ? chartArea.top + 8 + slot * 14
+                            : chartArea.bottom - 8 - slot * 14;
+                    const label = `${level.label} ${level.value.toFixed(priceDigits)}${isAbove ? ' ↑' : isBelow ? ' ↓' : ''}`;
+
+                    ctx.beginPath();
+                    ctx.strokeStyle = level.color;
+                    ctx.lineWidth = isInRange ? 1.6 : 1.2;
+                    ctx.setLineDash(level.dash);
+                    ctx.moveTo(chartArea.left, y);
+                    ctx.lineTo(isInRange ? chartArea.right : chartArea.left + 18, y);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+
+                    ctx.font = '600 8px Segoe UI';
+                    const badgeWidth = ctx.measureText(label).width + 8;
+                    ctx.fillStyle = isDark ? 'rgba(11, 20, 29, 0.94)' : 'rgba(255, 255, 255, 0.94)';
+                    ctx.fillRect(chartArea.left + 21, y - 7, badgeWidth, 14);
+                    ctx.fillStyle = level.color;
+                    ctx.textAlign = 'left';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(label, chartArea.left + 25, y);
+                });
+                ctx.textBaseline = 'alphabetic';
+
+                const livePrice = Number(currentLivePrice);
+                if (Number.isFinite(livePrice) && livePrice >= yAxis.min && livePrice <= yAxis.max) {
+                    const y = yAxis.getPixelForValue(livePrice);
+                    const digits = Number.isInteger(Number(globalData?.mt5_symbol?.digits))
+                        ? Number(globalData.mt5_symbol.digits)
+                        : 3;
+                    const label = livePrice.toFixed(digits);
+                    ctx.font = '600 8px Segoe UI';
+                    const axisGutter = Math.max(42, chart.width - chartArea.right);
+                    const badgeWidth = Math.min(axisGutter - 5, Math.max(42, ctx.measureText(label).width + 10));
+                    const badgeHeight = 16;
+                    const badgeX = chartArea.right + 3;
+                    const badgeY = Math.max(
+                        chartArea.top,
+                        Math.min(chartArea.bottom - badgeHeight, y - badgeHeight / 2)
+                    );
+
+                    ctx.beginPath();
+                    ctx.strokeStyle = isDark ? 'rgba(53, 201, 149, 0.72)' : 'rgba(7, 135, 93, 0.72)';
+                    ctx.lineWidth = 0.9;
+                    ctx.setLineDash([3, 3]);
+                    ctx.moveTo(chartArea.left, y);
+                    ctx.lineTo(chartArea.right, y);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+
+                    ctx.fillStyle = isDark ? '#14795f' : '#087f5b';
+                    ctx.fillRect(badgeX, badgeY, badgeWidth, badgeHeight);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = '600 8px Segoe UI';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(label, badgeX + badgeWidth / 2, badgeY + badgeHeight / 2, badgeWidth - 4);
+                    ctx.textBaseline = 'alphabetic';
+                }
+
                 const levels = chart.options.plugins.cprLabels || [];
-                ctx.font = 'bold 8px Segoe UI';
+                ctx.font = '600 8px Segoe UI';
                 levels.forEach(lvl => {
                     const y = yAxis.getPixelForValue(lvl.value);
                     if (y >= chart.chartArea.top && y <= chart.chartArea.bottom) {
                         const isTarget = Math.abs(lvl.value - activeSrTargetVal) < 0.01;
                         const isCoreCPR = ['Pivot', 'TC', 'BC'].includes(lvl.name);
+                        const levelColor = isDark
+                            ? (isCoreCPR ? lvl.color : (isTarget ? '#bd5860' : 'rgba(130, 148, 166, 0.3)'))
+                            : (isCoreCPR ? lvl.color : (isTarget ? '#c84952' : 'rgba(100, 117, 135, 0.24)'));
 
                         ctx.beginPath();
-                        ctx.strokeStyle = isCoreCPR ? lvl.color : (isTarget ? '#ef4444' : 'rgba(148, 163, 184, 0.3)');
-                        ctx.lineWidth = isCoreCPR ? 1.5 : 1;
-                        ctx.setLineDash(isCoreCPR ? [4, 2] : [2, 2]);
+                        ctx.strokeStyle = levelColor;
+                        ctx.lineWidth = isCoreCPR ? 1.15 : 0.8;
+                        ctx.setLineDash(isCoreCPR ? [5, 3] : [2, 3]);
                         ctx.moveTo(chart.chartArea.left, y);
                         ctx.lineTo(chart.chartArea.right, y);
                         ctx.stroke();
                         ctx.setLineDash([]);
 
-                        ctx.fillStyle = isTarget ? '#ef4444' : lvl.color;
+                        ctx.fillStyle = isTarget ? (isDark ? '#bd5860' : '#a8323c') : lvl.color;
                         ctx.textAlign = 'left';
-                        ctx.fillText(`${lvl.name}: ${lvl.value}${isTarget ? ' ◄ TARGET' : ''}`, chart.chartArea.right - 90, y - 3);
+                        ctx.fillText(`${lvl.name}: ${lvl.value}${isTarget ? ' ◄ TARGET' : ''}`, chart.chartArea.right - 94, y - 3);
                     }
                 });
 
@@ -1443,14 +2106,16 @@
                     const y = yAxis.getPixelForValue(linePrice);
                     if (y >= chart.chartArea.top && y <= chart.chartArea.bottom) {
                         ctx.beginPath();
-                        ctx.strokeStyle = '#9B870C';
-                        ctx.lineWidth = 2;
+                        ctx.strokeStyle = isDark ? '#c59b43' : '#9a6b0b';
+                        ctx.lineWidth = 1.2;
+                        ctx.setLineDash([6, 3]);
                         ctx.moveTo(chart.chartArea.left, y);
                         ctx.lineTo(chart.chartArea.right, y);
                         ctx.stroke();
+                        ctx.setLineDash([]);
 
-                        ctx.fillStyle = '#9B870C';
-                        ctx.font = 'bold 9px Segoe UI';
+                        ctx.fillStyle = isDark ? '#c59b43' : '#80590a';
+                        ctx.font = '600 8px Segoe UI';
                         ctx.textAlign = 'right';
                         ctx.fillText(`📍 Custom: ${linePrice.toFixed(3)} [Click to delete]`, chart.chartArea.right - 10, y - 4);
                     }
@@ -1538,12 +2203,12 @@
 
             if (tf.candles.length > 0 && !globalData.current_price) {
                 currentLivePrice = tf.candles[tf.candles.length - 1].close;
-                const derivSymbol = globalData.deriv_symbol || selectedSymbol;
+                const marketDataSource = globalData.market_data_source || "MT5";
                 const digits = Number.isInteger(Number(globalData.mt5_symbol?.digits))
                     ? Number(globalData.mt5_symbol.digits)
                     : 3;
                 document.getElementById('livePriceDisplay').innerText =
-                    `${selectedSymbol} (${derivSymbol}): ${currentLivePrice.toFixed(digits)}`;
+                    `${selectedSymbol} (${marketDataSource}): ${currentLivePrice.toFixed(digits)}`;
             }
 
             updatePredictionsForSelectedTF(tf);
@@ -1591,6 +2256,10 @@
                 .filter(price => !focusRecentCandles || (price >= candleLow - scaleMargin && price <= candleHigh + scaleMargin));
             const localHighs = [...candlesSlice.map(c => c.high), ...bbUpper, ...nearbyPriceLevels];
             const localLows = [...candlesSlice.map(c => c.low), ...bbLower, ...nearbyPriceLevels];
+            if (Number.isFinite(Number(currentLivePrice)) && Number(currentLivePrice) > 0) {
+                localHighs.push(Number(currentLivePrice));
+                localLows.push(Number(currentLivePrice));
+            }
             const minY = Math.min(...localLows) - 0.5;
             const maxY = Math.max(...localHighs) + 0.5;
 
@@ -1607,8 +2276,20 @@
             ];
 
             const isDark = document.body.getAttribute('data-theme') === 'dark';
-            const gridColor = isDark ? '#1e293b' : '#cbd5e1';
-            const textColor = isDark ? '#94a3b8' : '#64748b';
+            const gridColor = isDark ? 'rgba(126, 148, 166, 0.13)' : 'rgba(91, 112, 132, 0.13)';
+            const textColor = isDark ? '#91a5b7' : '#687b8d';
+            const chartSeriesColors = {
+                ema20: isDark ? '#59bfd0' : '#087f9a',
+                ema50: isDark ? '#d9a64c' : '#a66c0b',
+                ema200: isDark ? '#a58bd8' : '#7251b5',
+                bbUpper: isDark ? '#c979a2' : '#b94d85',
+                bbLower: isDark ? '#8e80c7' : '#7251b5',
+                previousOpen: isDark ? '#e5b454' : '#a76108',
+                previousClose: isDark ? '#69b8ec' : '#176b9b',
+            };
+            const priceDigits = Number.isInteger(Number(globalData?.mt5_symbol?.digits))
+                ? Number(globalData.mt5_symbol.digits)
+                : 3;
 
             if (!priceChartInstance) {
                 const ctx = document.getElementById('priceChart').getContext('2d');
@@ -1617,23 +2298,63 @@
                     data: {
                         labels: labels,
                         datasets: [
-                            { label: 'Solid_Candles', data: closes, ohlcData: candlesSlice, borderColor: 'transparent', pointRadius: 0, order: 7 },
-                            { label: 'Prev Close', data: prevCloseArr, borderColor: '#FF8C00', borderWidth: 2, pointRadius: 0, fill: false, order: 6 },
-                            { label: 'Prev Open', data: prevOpenArr, borderColor: '#FF8C00', borderWidth: 2, pointRadius: 0, fill: false, order: 5 },
-                            { label: 'BB Upper', data: bbUpper, borderColor: '#ec4899', borderWidth: 1.2, borderDash: [4,2], pointRadius: 0, fill: false, order: 4 },
-                            { label: 'BB Middle', data: bbMiddle, borderColor: 'rgba(245, 158, 11, 0.4)', borderWidth: 1, pointRadius: 0, fill: false, order: 4 },
-                            { label: 'BB Lower', data: bbLower, borderColor: '#8b5cf6', borderWidth: 1.2, borderDash: [4,2], pointRadius: 0, fill: false, order: 4 },
-                            { label: 'EMA 20', data: ema20Arr, borderColor: '#06b6d4', borderWidth: 1, pointRadius: 0, fill: false, order: 3 },
-                            { label: 'EMA 50', data: ema50Arr, borderColor: '#f59e0b', borderWidth: 1, pointRadius: 0, fill: false, order: 2 },
-                            { label: 'EMA 200', data: ema200Arr, borderColor: '#a855f7', borderWidth: 1.2, pointRadius: 0, fill: false, order: 1 }
+                            { label: 'Solid_Candles', data: closes, ohlcData: candlesSlice, prevDayOpen: prevOpenVal, prevDayClose: prevCloseVal, borderColor: 'transparent', pointRadius: 0, order: 7 },
+                            { label: 'Prev Close', data: prevCloseArr, borderColor: chartSeriesColors.previousClose, borderWidth: 1.1, borderDash: [5, 3], pointRadius: 0, fill: false, order: 6 },
+                            { label: 'Prev Open', data: prevOpenArr, borderColor: chartSeriesColors.previousOpen, borderWidth: 1.1, borderDash: [2, 3], pointRadius: 0, fill: false, order: 5 },
+                            { label: 'BB Upper', data: bbUpper, borderColor: chartSeriesColors.bbUpper, borderWidth: 1, borderDash: [3, 3], pointRadius: 0, fill: false, order: 4 },
+                            { label: 'BB Middle', data: bbMiddle, borderColor: isDark ? 'rgba(217, 166, 76, 0.45)' : 'rgba(166, 108, 11, 0.38)', borderWidth: 0.8, borderDash: [2, 3], pointRadius: 0, fill: false, order: 4 },
+                            { label: 'BB Lower', data: bbLower, borderColor: chartSeriesColors.bbLower, borderWidth: 1, borderDash: [3, 3], pointRadius: 0, fill: false, order: 4 },
+                            { label: 'EMA 20', data: ema20Arr, borderColor: chartSeriesColors.ema20, borderWidth: 1.25, pointRadius: 0, fill: false, order: 3 },
+                            { label: 'EMA 50', data: ema50Arr, borderColor: chartSeriesColors.ema50, borderWidth: 1.1, pointRadius: 0, fill: false, order: 2 },
+                            { label: 'EMA 200', data: ema200Arr, borderColor: chartSeriesColors.ema200, borderWidth: 1.2, pointRadius: 0, fill: false, order: 1 }
                         ]
                     },
                     options: {
                         responsive: true, maintainAspectRatio: false, animation: false,
-                        plugins: { legend: { display: false }, cprLabels: cprLevelsForLabels },
+                        interaction: { intersect: false, mode: 'index' },
+                        layout: { padding: { top: 6, right: 3, bottom: 1, left: 3 } },
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: { enabled: false },
+                            cprLabels: cprLevelsForLabels,
+                        },
                         scales: { 
-                            x: { display: true, grid: { color: gridColor }, ticks: { font: { size: 6 }, color: textColor, maxTicksLimit: 8 }, offset: true },
-                            y: { min: minY, max: maxY, grid: { color: gridColor }, ticks: { font: { size: 7 }, color: textColor } }
+                            x: {
+                                display: true,
+                                grid: { color: gridColor, drawTicks: false },
+                                border: { display: false },
+                                ticks: {
+                                    font: { size: 9 },
+                                    color: textColor,
+                                    maxTicksLimit: 7,
+                                    maxRotation: 0,
+                                    padding: 8,
+                                    callback(value, index, ticks) {
+                                        const label = this.getLabelForValue(value);
+                                        return label ? label.slice(0, 5) : '';
+                                    },
+                                },
+                                offset: true,
+                            },
+                            y: {
+                                min: minY,
+                                max: maxY,
+                                position: 'right',
+                                grid: { color: gridColor, drawTicks: false },
+                                border: { display: false },
+                                ticks: {
+                                    font: { size: 9, weight: '500' },
+                                    color: textColor,
+                                    maxTicksLimit: 6,
+                                    padding: 8,
+                                    callback(value) {
+                                        return Number(value).toLocaleString(undefined, {
+                                            minimumFractionDigits: priceDigits,
+                                            maximumFractionDigits: priceDigits,
+                                        });
+                                    },
+                                },
+                            }
                         }
                     }
                 });
@@ -1642,6 +2363,8 @@
                 priceChartInstance.data.labels = labels;
                 priceChartInstance.data.datasets[0].data = closes;
                 priceChartInstance.data.datasets[0].ohlcData = candlesSlice;
+                priceChartInstance.data.datasets[0].prevDayOpen = prevOpenVal;
+                priceChartInstance.data.datasets[0].prevDayClose = prevCloseVal;
                 priceChartInstance.data.datasets[1].data = prevCloseArr;
                 priceChartInstance.data.datasets[2].data = prevOpenArr;
                 priceChartInstance.data.datasets[3].data = bbUpper;
@@ -1653,6 +2376,18 @@
 
                 priceChartInstance.options.scales.y.min = minY;
                 priceChartInstance.options.scales.y.max = maxY;
+                priceChartInstance.data.datasets[1].borderColor = chartSeriesColors.previousClose;
+                priceChartInstance.data.datasets[2].borderColor = chartSeriesColors.previousOpen;
+                priceChartInstance.data.datasets[3].borderColor = chartSeriesColors.bbUpper;
+                priceChartInstance.data.datasets[4].borderColor = isDark ? 'rgba(217, 166, 76, 0.45)' : 'rgba(166, 108, 11, 0.38)';
+                priceChartInstance.data.datasets[5].borderColor = chartSeriesColors.bbLower;
+                priceChartInstance.data.datasets[6].borderColor = chartSeriesColors.ema20;
+                priceChartInstance.data.datasets[7].borderColor = chartSeriesColors.ema50;
+                priceChartInstance.data.datasets[8].borderColor = chartSeriesColors.ema200;
+                priceChartInstance.options.scales.x.grid.color = gridColor;
+                priceChartInstance.options.scales.x.ticks.color = textColor;
+                priceChartInstance.options.scales.y.grid.color = gridColor;
+                priceChartInstance.options.scales.y.ticks.color = textColor;
                 priceChartInstance.options.plugins.cprLabels = cprLevelsForLabels;
                 priceChartInstance.update('none');
             }

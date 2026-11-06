@@ -324,18 +324,64 @@ class StartupSafetyTests(unittest.TestCase):
             patch.object(engine, "current_price", 100.0),
             patch.object(engine, "broadcast_state_update") as broadcast,
         ):
-            engine.on_message(
-                None,
-                json.dumps({
-                    "msg_type": "tick",
-                    "tick": {"symbol": "R_10", "quote": 210.0, "epoch": 600},
-                }),
-            )
+            with patch.object(engine.mt5_bridge, "market_data_snapshot", return_value=(
+                {
+                    symbol: {
+                        "quote": {"bid": 210.0, "ask": 210.2, "time": 600},
+                        "history": {},
+                    }
+                },
+                {"status": "CONNECTED"},
+            )):
+                engine.poll_mt5_market_data()
 
         self.assertEqual(cache["5m"].iloc[-1]["open"], 210.0)
         self.assertEqual(cache["5m"].iloc[-1]["close"], 210.0)
         self.assertEqual(prices["Volatility 25 Index"], 100.0)
         broadcast.assert_called_once()
+
+    def test_mt5_history_populates_each_symbol_timeframe_cache(self):
+        symbol = "Volatility 10 Index"
+        rates = [{
+            "time": 600,
+            "open": 200.0,
+            "high": 202.0,
+            "low": 199.0,
+            "close": 201.0,
+        }]
+        snapshot = {
+            supported_symbol: {
+                "quote": {"bid": 201.0, "ask": 201.2, "time": 600},
+                "history": {
+                    timeframe: rates for timeframe in engine.MT5_TIMEFRAMES
+                },
+            }
+            for supported_symbol in engine.SUPPORTED_SYMBOLS
+        }
+        caches = {
+            supported_symbol: engine.create_timeframe_cache()
+            for supported_symbol in engine.SUPPORTED_SYMBOLS
+        }
+        prices = {supported_symbol: 0.0 for supported_symbol in engine.SUPPORTED_SYMBOLS}
+
+        with (
+            patch.object(engine, "symbol_tf_caches", caches),
+            patch.object(engine, "current_prices", prices),
+            patch.object(engine, "current_price", 0.0),
+            patch.object(engine.mt5_bridge, "market_data_snapshot", return_value=(
+                snapshot,
+                {"status": "CONNECTED"},
+            )),
+            patch.object(engine, "broadcast_state_update"),
+        ):
+            history_loaded = engine.poll_mt5_market_data(include_history=True)
+
+        candle = caches[symbol]["5m"].iloc[0]
+        self.assertTrue(history_loaded)
+        self.assertEqual(candle["open"], 200.0)
+        self.assertEqual(candle["high"], 202.0)
+        self.assertEqual(candle["low"], 199.0)
+        self.assertEqual(candle["close"], 201.0)
 
     def test_short_history_does_not_invent_atr_for_trade_levels(self):
         index = pd.date_range("2026-01-01", periods=5, freq="5min", tz="UTC")
@@ -365,8 +411,9 @@ class StartupSafetyTests(unittest.TestCase):
                 state = json.loads(response.read())
                 connection.close()
 
-            self.assertEqual(set(state["symbols"]), set(engine.DERIV_SYMBOLS))
+            self.assertEqual(set(state["symbols"]), set(engine.SUPPORTED_SYMBOLS))
             self.assertEqual(state["default_symbol"], engine.DEFAULT_SYMBOL)
+            self.assertEqual(state["market_data_source"], "MT5")
         finally:
             server.shutdown()
             server.server_close()

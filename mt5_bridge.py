@@ -210,6 +210,45 @@ class MT5Bridge:
             )
             return state, self.status(trade_allowed=trade_allowed)
 
+    def market_data_snapshot(
+        self,
+        timeframes: dict[str, str],
+        history_count: int = 300,
+        include_history: bool = False,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+        with self._lock:
+            if not self.connect():
+                return None, self.status()
+
+            snapshot: dict[str, Any] = {}
+            for symbol in self.symbols:
+                selected = mt5.symbol_select(symbol, True)
+                tick = mt5.symbol_info_tick(symbol) if selected else None
+                symbol_data: dict[str, Any] = {
+                    "quote": (
+                        {
+                            "bid": float(tick.bid),
+                            "ask": float(tick.ask),
+                            "time": int(tick.time),
+                        }
+                        if tick is not None
+                        else None
+                    ),
+                    "history": {},
+                }
+                if include_history and selected:
+                    for timeframe, mt5_timeframe in timeframes.items():
+                        mt5_constant = getattr(mt5, mt5_timeframe, None)
+                        if mt5_constant is None:
+                            symbol_data["history"][timeframe] = None
+                            continue
+                        symbol_data["history"][timeframe] = mt5.copy_rates_from_pos(
+                            symbol, mt5_constant, 0, history_count
+                        )
+                snapshot[symbol] = symbol_data
+
+            return snapshot, self.status()
+
     def status(self, trade_allowed: bool | None = None) -> dict[str, Any]:
         terminal_path = self.terminal_path
         return {

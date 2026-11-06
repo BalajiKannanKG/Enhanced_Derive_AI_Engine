@@ -7,7 +7,6 @@ import re
 import threading
 import time
 import os
-import traceback
 from datetime import datetime
 from datetime import timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -15,26 +14,23 @@ from urllib.parse import urlsplit
 from typing import Any, cast
 import pandas as pd
 import pandas_ta as ta
-import websocket
 from mt5_bridge import MT5Bridge
 from websockets.sync.server import serve
 
 ta_indicators: Any = cast(Any, ta)
 
-DERIV_WS_URL = "wss://api.derivws.com/trading/v1/options/ws/public?app_id=1089"
-DERIV_SYMBOLS = {
-    "Volatility 10 Index": "R_10",
-    "Volatility 25 Index": "R_25",
-    "Volatility 50 Index": "R_50",
-    "Volatility 100 Index": "R_100",
-}
-DERIV_TO_MT5_SYMBOL = {code: name for name, code in DERIV_SYMBOLS.items()}
+SUPPORTED_SYMBOLS = (
+    "Volatility 10 Index",
+    "Volatility 25 Index",
+    "Volatility 50 Index",
+    "Volatility 100 Index",
+)
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 DASHBOARD_PORT = int(os.environ.get("DASHBOARD_PORT", "8080"))
 WEBSOCKET_PORT = 8765 if DASHBOARD_PORT == 8080 else DASHBOARD_PORT + 1
 MT5_SYMBOL = os.environ.get("MT5_SYMBOL", "Volatility 25 Index")
-if MT5_SYMBOL not in DERIV_SYMBOLS:
-    raise ValueError(f"MT5_SYMBOL must be one of: {', '.join(DERIV_SYMBOLS)}")
+if MT5_SYMBOL not in SUPPORTED_SYMBOLS:
+    raise ValueError(f"MT5_SYMBOL must be one of: {', '.join(SUPPORTED_SYMBOLS)}")
 DEFAULT_SYMBOL = MT5_SYMBOL
 MAX_OPEN_POSITIONS = 1
 MT5_MAGIC_NUMBER = 123456
@@ -56,11 +52,11 @@ AUTO_TRADING_ENABLED = False
 agent_status = "DATA ONLY"
 current_signal = "HOLD / SCANNING"
 current_price = 0.0
-current_prices = {symbol: 0.0 for symbol in DERIV_SYMBOLS}
+current_prices = {symbol: 0.0 for symbol in SUPPORTED_SYMBOLS}
 state_lock = threading.Lock()
 connected_ui_clients = set()
 latest_state_payload = None
-mt5_bridge = MT5Bridge(symbol=DEFAULT_SYMBOL, symbols=list(DERIV_SYMBOLS))
+mt5_bridge = MT5Bridge(symbol=DEFAULT_SYMBOL, symbols=list(SUPPORTED_SYMBOLS))
 mt5_state_lock = threading.Lock()
 latest_mt5_account = {}
 latest_mt5_status = mt5_bridge.status()
@@ -113,13 +109,22 @@ TF_GRANULARITY = {
     'h4': 14400,
     'd1': 86400
 }
+MT5_TIMEFRAMES = {
+    '3m': 'TIMEFRAME_M3',
+    '5m': 'TIMEFRAME_M5',
+    '15m': 'TIMEFRAME_M15',
+    '30m': 'TIMEFRAME_M30',
+    'h1': 'TIMEFRAME_H1',
+    'h4': 'TIMEFRAME_H4',
+    'd1': 'TIMEFRAME_D1',
+}
 
 def create_timeframe_cache() -> dict[str, pd.DataFrame | None]:
     return {timeframe: None for timeframe in TF_GRANULARITY}
 
 
 symbol_tf_caches = {
-    symbol: create_timeframe_cache() for symbol in DERIV_SYMBOLS
+    symbol: create_timeframe_cache() for symbol in SUPPORTED_SYMBOLS
 }
 tf_caches = symbol_tf_caches[DEFAULT_SYMBOL]
 
@@ -273,7 +278,14 @@ def process_dataframe(df, symbol: str = DEFAULT_SYMBOL):
         "prev_day_close": round(prev_close, 3)
     }
 
-def evaluate_multi_path_strategy(tf_data, h1_data, current_price, cpr, all_timeframes):
+def evaluate_multi_path_strategy(
+    tf_data,
+    h1_data,
+    current_price,
+    cpr,
+    all_timeframes,
+    include_sub_5m_confluence=True,
+):
     atr = tf_data.get("atr", 1.0)
     adx = tf_data.get("adx", 20.0)
     rsi = tf_data.get("rsi", 50.0)
@@ -334,12 +346,36 @@ def evaluate_multi_path_strategy(tf_data, h1_data, current_price, cpr, all_timef
         t3m = all_timeframes.get('3m', {}).get('trend', 'FLAT')
         t5m = all_timeframes.get('5m', {}).get('trend', 'FLAT')
         t15m = all_timeframes.get('15m', {}).get('trend', 'FLAT')
-        if t3m == "BULLISH" and t5m == "BULLISH" and t15m == "BULLISH" and h1_trend == "BULLISH":
+        if include_sub_5m_confluence and (
+            t3m == "BULLISH"
+            and t5m == "BULLISH"
+            and t15m == "BULLISH"
+            and h1_trend == "BULLISH"
+        ):
             total_score += 30
             active_paths.append("Path E (MTF Bullish Alignment)")
-        elif t3m == "BEARISH" and t5m == "BEARISH" and t15m == "BEARISH" and h1_trend == "BEARISH":
+        elif include_sub_5m_confluence and (
+            t3m == "BEARISH"
+            and t5m == "BEARISH"
+            and t15m == "BEARISH"
+            and h1_trend == "BEARISH"
+        ):
             total_score -= 30
             active_paths.append("Path E (MTF Bearish Alignment)")
+        elif not include_sub_5m_confluence and (
+            t5m == "BULLISH"
+            and t15m == "BULLISH"
+            and h1_trend == "BULLISH"
+        ):
+            total_score += 30
+            active_paths.append("Path E (5m/15m/1h Bullish Alignment)")
+        elif not include_sub_5m_confluence and (
+            t5m == "BEARISH"
+            and t15m == "BEARISH"
+            and h1_trend == "BEARISH"
+        ):
+            total_score -= 30
+            active_paths.append("Path E (5m/15m/1h Bearish Alignment)")
 
     # PATH F: Fair Value Gap (FVG) Retest
     if len(tf_data.get("candles", [])) >= 3:
@@ -590,7 +626,7 @@ def manage_active_trades(agent_state):
 
     for pos in positions:
         symbol = pos.get("symbol")
-        if symbol not in DERIV_SYMBOLS or int(pos.get("magic", 0)) != MT5_MAGIC_NUMBER:
+        if symbol not in SUPPORTED_SYMBOLS or int(pos.get("magic", 0)) != MT5_MAGIC_NUMBER:
             continue
 
         symbol_state = agent_state.get("symbols", {}).get(symbol, {})
@@ -680,9 +716,94 @@ def refresh_mt5_state():
         latest_mt5_status = status
 
 def mt5_monitor_loop():
+    history_loaded = False
+    last_history_attempt = 0.0
     while True:
         refresh_mt5_state()
+        now = time.monotonic()
+        if not history_loaded and now - last_history_attempt >= 60:
+            history_loaded = poll_mt5_market_data(include_history=True)
+            last_history_attempt = now
+        else:
+            poll_mt5_market_data()
         time.sleep(1)
+
+
+def apply_mt5_tick(symbol: str, price: float, tick_epoch: int):
+    global current_price
+    if symbol not in symbol_tf_caches or price <= 0:
+        return
+
+    with state_lock:
+        current_prices[symbol] = price
+        if symbol == DEFAULT_SYMBOL:
+            current_price = price
+        caches = symbol_tf_caches[symbol]
+        for timeframe, granularity in TF_GRANULARITY.items():
+            df = caches.get(timeframe)
+            if df is None or df.empty:
+                continue
+
+            bucket_epoch = (tick_epoch // granularity) * granularity
+            bucket_time = datetime.fromtimestamp(bucket_epoch, timezone.utc)
+            last_time = df.index[-1]
+            if bucket_time > last_time:
+                new_row = pd.DataFrame(
+                    [{
+                        "time": bucket_epoch,
+                        "open": price,
+                        "high": price,
+                        "low": price,
+                        "close": price,
+                    }],
+                    index=pd.DatetimeIndex([bucket_time]),
+                )
+                caches[timeframe] = pd.concat([df, new_row]).iloc[-300:]
+            elif bucket_time == last_time:
+                df.at[last_time, "close"] = price
+                df.at[last_time, "high"] = max(float(df.at[last_time, "high"]), price)
+                df.at[last_time, "low"] = min(float(df.at[last_time, "low"]), price)
+
+
+def poll_mt5_market_data(include_history: bool = False) -> bool:
+    snapshot, status = mt5_bridge.market_data_snapshot(
+        MT5_TIMEFRAMES,
+        history_count=300,
+        include_history=include_history,
+    )
+    if snapshot is None:
+        print(f"MT5 market data unavailable: {status.get('detail', 'Connection failed.')}")
+        return False
+
+    history_loaded = True
+    for symbol in SUPPORTED_SYMBOLS:
+        symbol_data = snapshot.get(symbol, {})
+        quote = symbol_data.get("quote")
+        if quote is not None:
+            apply_mt5_tick(symbol, float(quote["bid"]), int(quote["time"]))
+
+        if include_history:
+            history = symbol_data.get("history", {})
+            for timeframe in MT5_TIMEFRAMES:
+                rates = history.get(timeframe)
+                if rates is None or len(rates) == 0:
+                    history_loaded = False
+                    print(
+                        f"MT5 history unavailable for {symbol} {timeframe}; "
+                        "check the terminal's symbol selection and chart history."
+                    )
+                    continue
+                frame = pd.DataFrame(rates)
+                frame["time"] = frame["time"].astype("int64")
+                frame.index = pd.to_datetime(frame["time"], unit="s", utc=True)
+                frame = frame[["time", "open", "high", "low", "close"]]
+                frame = frame[~frame.index.duplicated(keep="last")].sort_index()
+                with state_lock:
+                    symbol_tf_caches[symbol][timeframe] = frame.iloc[-300:]
+
+    broadcast_state_update()
+    return history_loaded
+
 
 def broadcast_state_update():
     """Build the latest engine snapshot and publish it to connected clients."""
@@ -700,7 +821,8 @@ def broadcast_state_update():
             daily_df = caches.get("d1")
             symbol_states[symbol] = {
                 "symbol": symbol,
-                "deriv_symbol": DERIV_SYMBOLS[symbol],
+                "market_data_symbol": symbol,
+                "market_data_source": "MT5",
                 "current_price": current_prices[symbol],
                 "signal": "HOLD / SCANNING",
                 "cpr": calculate_cpr(daily_df),
@@ -718,7 +840,8 @@ def broadcast_state_update():
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "agent_status": agent_status,
             "default_symbol": DEFAULT_SYMBOL,
-            "supported_symbols": list(DERIV_SYMBOLS),
+            "supported_symbols": list(SUPPORTED_SYMBOLS),
+            "market_data_source": "MT5",
             "symbols": symbol_states,
             "mt5_account": mt5_account_data,
             "mt5_bridge": mt5_status,
@@ -753,160 +876,6 @@ def broadcast_state_update():
     if disconnected:
         with state_lock:
             connected_ui_clients.difference_update(disconnected)
-
-def on_message(ws, message):
-    global current_price, current_prices, tf_caches
-    try:
-        data = json.loads(message)
-        msg_type = data.get("msg_type")
-        
-        if msg_type == "tick":
-            tick = data.get("tick")
-            if tick and "quote" in tick and "epoch" in tick:
-                symbol_code = tick.get("symbol")
-                if symbol_code is None:
-                    symbol_code = data.get("echo_req", {}).get("ticks")
-                symbol = DERIV_TO_MT5_SYMBOL.get(str(symbol_code))
-                if symbol is None:
-                    return
-                current_prices[symbol] = float(tick["quote"])
-                symbol_price = current_prices[symbol]
-                if symbol == DEFAULT_SYMBOL:
-                    current_price = symbol_price
-                tick_epoch = int(tick["epoch"])
-                
-                with state_lock:
-                    for tf, gran in TF_GRANULARITY.items():
-                        caches = symbol_tf_caches[symbol]
-                        df = caches.get(tf)
-                        if df is not None and not df.empty:
-                            # Calculate the official time bucket start for this tick
-                            bucket_epoch = (tick_epoch // gran) * gran
-                            bucket_dt = datetime.fromtimestamp(bucket_epoch, timezone.utc)
-                            
-                            last_idx = df.index[-1]
-                            
-                            if bucket_dt > last_idx:
-                                # 🚀 Countdown finished: A new candle period has started! Append a new row.
-                                new_row = pd.DataFrame([{
-                                    "time": bucket_epoch,
-                                    "open": symbol_price,
-                                    "high": symbol_price,
-                                    "low": symbol_price,
-                                    "close": symbol_price
-                                }], index=pd.DatetimeIndex([bucket_dt]))
-                                
-                                # Append and keep the dataframe trimmed to the last 300 rows
-                                df = pd.concat([df, new_row])
-                                caches[tf] = df.iloc[-300:]
-                            else:
-                                # 🔄 Still within the current candle period: update High, Low, and Close
-                                high_val = float(cast(Any, df.at[last_idx, 'high']))
-                                low_val = float(cast(Any, df.at[last_idx, 'low']))
-                                
-                                df.at[last_idx, 'close'] = symbol_price
-                                if symbol_price > high_val:
-                                    df.at[last_idx, 'high'] = symbol_price
-                                if symbol_price < low_val:
-                                    df.at[last_idx, 'low'] = symbol_price
-                                    
-                broadcast_state_update()
-                
-        elif msg_type in ("candles", "history"):
-            candles = data.get("candles", [])
-            echo = data.get("echo_req", {})
-            granularity = echo.get("granularity")
-            symbol_code = echo.get("ticks_history")
-            symbol = DERIV_TO_MT5_SYMBOL.get(str(symbol_code))
-            target_tf = next((tf for tf, gran in TF_GRANULARITY.items() if gran == granularity), None)
-                    
-            if candles and target_tf and symbol:
-                rows = []
-                timestamps = []
-                for c in candles:
-                    epoch_time = c.get('epoch')
-                    dt_index = datetime.fromtimestamp(epoch_time, timezone.utc)
-                    timestamps.append(dt_index)
-                    rows.append({
-                        "time": epoch_time,
-                        "open": float(c['open']),
-                        "high": float(c['high']),
-                        "low": float(c['low']),
-                        "close": float(c['close'])
-                    })
-                with state_lock:
-                    temp_df = pd.DataFrame(rows, index=pd.DatetimeIndex(timestamps))
-                    temp_df = temp_df[~temp_df.index.duplicated(keep='last')].sort_index()
-                    symbol_tf_caches[symbol][target_tf] = temp_df
-                broadcast_state_update()
-    except Exception as e:
-        print(f"ERROR: on_message: {e}")
-        traceback.print_exc()
-        
-def on_error(ws, error):
-    print(f"Deriv Options WS Error: {error}")
-
-active_deriv_ws = None
-
-def on_open(ws):
-    global active_deriv_ws
-    active_deriv_ws = ws
-    print("Connected successfully to Deriv Options Public WebSocket API!")
-    
-    for symbol_code in DERIV_SYMBOLS.values():
-        for granularity in TF_GRANULARITY.values():
-            history_req = {
-                "ticks_history": symbol_code,
-                "adjust_start_time": 1,
-                "count": 300,
-                "end": "latest",
-                "granularity": granularity,
-                "style": "candles"
-            }
-            ws.send(json.dumps(history_req))
-            time.sleep(0.1)
-
-        ws.send(json.dumps({"ticks": symbol_code, "subscribe": 1}))
-        time.sleep(0.1)
-
-def on_close(ws, close_status_code, close_msg):
-    global active_deriv_ws
-    active_deriv_ws = None
-    print(f"Deriv Options WS closed (code: {close_status_code}). Reconnecting in 3 seconds...")
-
-def start_deriv_ws():
-    global active_deriv_ws
-    retry_delay = 3
-    while True:
-        try:
-            custom_headers = {
-                "Origin": "https://app.deriv.com",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            }
-            ws = websocket.WebSocketApp(
-                DERIV_WS_URL,
-                header=custom_headers,
-                on_open=on_open,
-                on_message=on_message,
-                on_error=on_error,
-                on_close=on_close
-            )
-            ws.run_forever(ping_interval=30, ping_timeout=10)
-        except Exception as e:
-            print(f"ERROR: Deriv WS exception: {e}")
-        
-        print(f"Retrying Deriv connection in {retry_delay} seconds...")
-        time.sleep(retry_delay)
-        retry_delay = min(retry_delay * 1.5, 30)
-
-def deriv_heartbeat_loop():
-    while True:
-        time.sleep(25)
-        try:
-            if active_deriv_ws and active_deriv_ws.sock and active_deriv_ws.sock.connected:
-                active_deriv_ws.send(json.dumps({"ping": 1}))
-        except Exception:
-            pass
 
 class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
     def _send_json(self, status_code, response):
@@ -947,7 +916,8 @@ class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
                 empty_symbols = {
                     symbol: {
                         "symbol": symbol,
-                        "deriv_symbol": deriv_symbol,
+                        "market_data_symbol": symbol,
+                        "market_data_source": "MT5",
                         "current_price": 0.0,
                         "signal": "HOLD / SCANNING",
                         "cpr": {},
@@ -955,13 +925,14 @@ class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
                         "decision_audit": empty_audit,
                         "mt5_symbol": {},
                     }
-                    for symbol, deriv_symbol in DERIV_SYMBOLS.items()
+                    for symbol in SUPPORTED_SYMBOLS
                 }
                 payload = json.dumps({
                     "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "agent_status": agent_status,
                     "default_symbol": DEFAULT_SYMBOL,
-                    "supported_symbols": list(DERIV_SYMBOLS),
+                    "supported_symbols": list(SUPPORTED_SYMBOLS),
+                    "market_data_source": "MT5",
                     "symbols": empty_symbols,
                     "current_price": 0.0,
                     "signal": current_signal,
@@ -1158,7 +1129,7 @@ def run_websocket_server():
 
 def main():
     global LIVE_TRADING_ENABLED, AUTO_TRADING_ENABLED, agent_status
-    parser = argparse.ArgumentParser(description="Run the local Deriv dashboard and market-data engine.")
+    parser = argparse.ArgumentParser(description="Run the local MT5 dashboard and market-data engine.")
     parser.add_argument(
         "--enable-live-trading",
         action="store_true",
@@ -1188,13 +1159,14 @@ def main():
             print("AUTOMATED STRATEGY ORDERS ARE ALSO ENABLED.")
     else:
         agent_status = "DATA ONLY"
-        print("Live order execution is disabled. MT5 account data remains read-only.")
+        print(
+            "Live order execution is disabled. MT5 market data and account "
+            "information are read-only."
+        )
 
     print("Initializing initial agent state cache...")
     
     refresh_mt5_state()
-    threading.Thread(target=start_deriv_ws, daemon=True).start()
-    threading.Thread(target=deriv_heartbeat_loop, daemon=True).start()
     threading.Thread(target=mt5_monitor_loop, daemon=True).start()
     threading.Thread(target=run_websocket_server, daemon=True).start()
     

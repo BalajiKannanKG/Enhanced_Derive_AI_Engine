@@ -20,9 +20,11 @@ class FakeMetaTrader5:
     TRADE_RETCODE_DONE = 10009
     TRADE_RETCODE_DONE_PARTIAL = 10010
     TRADE_RETCODE_PLACED = 10008
+    TIMEFRAME_M5 = 5
 
     def __init__(self):
         self.order_send_calls = []
+        self.history_calls = []
         self.positions = ()
 
     def last_error(self):
@@ -72,6 +74,18 @@ class FakeMetaTrader5:
         return SimpleNamespace(
             ask=100.1 + symbol_offset, bid=100.0 + symbol_offset, time=0
         )
+
+    def copy_rates_from_pos(self, symbol, timeframe, start, count):
+        self.history_calls.append((symbol, timeframe, start, count))
+        return [
+            {
+                "time": 300,
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.5,
+            }
+        ]
 
     def symbol_info(self, symbol):
         symbol_minimum = {
@@ -151,6 +165,23 @@ class MT5BridgeTests(unittest.TestCase):
         )
         self.assertEqual(account["symbols"]["Volatility 10 Index"]["quote"]["bid"], 110.0)
         self.assertEqual(account["symbols"]["Volatility 100 Index"]["volume_min"], 0.4)
+
+    def test_market_data_snapshot_reads_mt5_quotes_and_requested_candles(self):
+        snapshot, status = self.bridge.market_data_snapshot(
+            {"5m": "TIMEFRAME_M5"},
+            history_count=300,
+            include_history=True,
+        )
+
+        self.assertEqual(snapshot["Volatility 25 Index"]["quote"]["bid"], 100.0)
+        self.assertEqual(
+            snapshot["Volatility 25 Index"]["history"]["5m"][0]["close"],
+            100.5,
+        )
+        self.assertEqual(self.fake_mt5.history_calls, [
+            ("Volatility 25 Index", self.fake_mt5.TIMEFRAME_M5, 0, 300)
+        ])
+        self.assertTrue(status["connection_verified"])
 
     def test_order_rejects_symbol_outside_configured_list(self):
         succeeded, message, _ = self.bridge.place_market_order({

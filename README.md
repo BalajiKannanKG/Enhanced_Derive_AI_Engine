@@ -3,12 +3,12 @@
 This README is the project’s working reference for local setup, architecture,
 business requirements captured to date, interfaces, operational safety, and
 future enhancements. It distinguishes implemented behavior from requirements
-that still need an MT5 bridge or further design.
+that still need design or independent validation.
 
 > **Trading risk:** This is an experimental trading dashboard and automation
 > prototype, not financial advice or a guarantee of results. Start in
 > data-only mode. Do not enable live order dispatch until the broker account,
-> symbol specifications, MT5 Expert Advisor, and end-to-end risk handling have
+> symbol specifications, MT5 terminal configuration, and end-to-end risk handling have
 > been independently verified.
 
 ## 1. Project scope and business requirements
@@ -17,8 +17,9 @@ that still need an MT5 bridge or further design.
 
 The application connects to Deriv market data for the `R_25` synthetic index,
 calculates multi-timeframe indicators and strategy signals, and serves a local
-browser dashboard. An optional file-based integration passes order requests to
-an MT5 Expert Advisor.
+browser dashboard. An optional direct connection sends requests to a locally
+running MetaTrader 5 terminal through the official Python package. The
+application does not require or install an Expert Advisor.
 
 ### Requirements captured so far
 
@@ -27,10 +28,11 @@ an MT5 Expert Advisor.
 | Market data | Deriv public WebSocket market data for `R_25`; historical candles followed by live ticks. |
 | Timeframes | 3m, 5m, 15m, 30m, 1h, 4h, and 1d. Request up to 300 historical candles per timeframe; keep recent candles in memory. |
 | Dashboard | Local live chart and indicators, market/strategy status, account/position display, manual order controls, day tracker, and trade log pages. |
-| Order routing | Optional JSON-file handoff to an MT5 Expert Advisor. The engine is not itself an MT5 client and does not confirm broker execution. |
-| Local safety | Default to data-only; require an explicit live-mode command-line flag and MT5 Common Files path before enabling order dispatch. Bind HTTP and browser WebSocket services to loopback. |
-| Risk controls | Configurable per-trade risk metadata (default 1%) and daily-loss stop (default 2%). In live mode, missing/invalid daily MT5 metrics block new orders. |
-| Future history source | Begin with Deriv API candle history for any future backtest feature. Plan for MT5 history as a later source; neither backtesting nor an MT5-history adapter is currently implemented. |
+| Order routing | Optional direct order submission through the official MetaTrader5 Python API to an already installed, logged-in terminal. |
+| Local safety | Default to read-only account data; require `--enable-live-trading` and dashboard Start before order submission. Bind HTTP and browser WebSocket services to loopback. |
+| Risk controls | Per-trade monetary stop-loss risk cap (default 1%) and daily realized-plus-floating loss stop (default 2%). Missing or invalid live account data blocks new orders. |
+| Trade management | Python ports the provided bridge's magic-number-filtered ATR break-even/trailing stops, early structural exits, and live deal-history export. |
+| Future history source | Begin with Deriv API candle history for any future backtest feature. MT5 deal history is available through the direct terminal API; backtesting remains unimplemented. |
 | Deployment | Run on the user's Windows computer for now. Network/public hosting, authentication, and multi-user operation are out of scope until separately designed. |
 
 These are the decisions captured in the current project conversation; confirm
@@ -47,9 +49,13 @@ background threads for:
    configured granularity, then subscribes to live `R_25` ticks. It retries
    after a disconnect with an increasing delay.
 2. A heartbeat loop for the Deriv connection.
-3. A browser-facing WebSocket server on `127.0.0.1:8765`, which broadcasts
+3. A browser-facing WebSocket server on `127.0.0.1:8765` by default, which broadcasts
    market and account state.
-4. An HTTP dashboard server on `127.0.0.1:8080`.
+4. An HTTP dashboard server on `127.0.0.1:8080` by default.
+
+Set `DASHBOARD_PORT` to run a second local instance without taking over the
+default ports. Its browser WebSocket uses the next port (for example,
+`DASHBOARD_PORT=8081` serves HTTP on 8081 and WebSocket on 8082).
 
 The HTML pages use Chart.js from jsDelivr, so an internet connection is also
 needed for those charts unless that dependency is later bundled locally.
@@ -61,13 +67,14 @@ needed for those charts unless that dependency is later bundled locally.
 | `/` | Main live dashboard (`index.html`). |
 | `/tracker` | Day tracker (`tracker.html`). |
 | `/tradelog` | Trade log and performance page (`tradelog.html`). |
-| `/api/tradelog-data` | Reads trade history JSON from the configured MT5 directory when present; otherwise reads local `trade_history.json`, then the local CSV as a fallback. |
+| `/api/tradelog-data` | Queries recent real deal history from the connected MT5 terminal. |
 | `/api/control` (`POST`) | Dashboard Start, Pause, and Stop control. |
-| `/api/execute-trade` (`POST`) | Checks live-mode and risk prerequisites, then writes an order request for the MT5 Expert Advisor. |
-| `/agent_state.json` | Static-file route retained for the pages' polling fallback; the current engine does **not** write this file. |
+| `/api/execute-trade` (`POST`) | Validates account state, symbol, volume, stop/target, margin, and monetary risk before sending a market order directly to MT5. |
+| `/agent_state.json` | No-cache JSON snapshot of the latest in-memory engine state, also used by the dashboard polling fallback. |
 
-The HTML client streams state over `ws://localhost:8765`. The server allows
-origins `http://localhost:8080` and `http://127.0.0.1:8080`. HTTP POST endpoints
+The HTML client streams state over the matching local WebSocket port. The
+default server allows origins `http://localhost:8080` and
+`http://127.0.0.1:8080`. HTTP POST endpoints
 also check the local Host and Origin. These checks are defense-in-depth for a
 local tool, not user authentication. Do not expose the app through a LAN,
 reverse proxy, or public tunnel.
@@ -108,48 +115,52 @@ are in memory and are not a durable market-data store.
   status starts at `DATA ONLY`. The Start control does not enable trading.
   Automated trade management is disabled, and `/api/execute-trade` returns
   HTTP 403.
-- **Live-capable run:** Start the process with
-  `--enable-live-trading` and set `MT5_COMMON_FILES_PATH`. The dashboard must
-  then be set to Start before manual order dispatch or automated trading can
-  proceed.
+- **Live-capable run:** Start the process with `--enable-live-trading`. The
+  already installed and logged-in MT5 terminal must permit Python/API trading.
+  The dashboard must also be set to Start before manual order dispatch or
+  automated trading can proceed.
 - **Paused/stopped:** Dashboard controls update the in-memory engine status.
   These states are not persisted across restarts.
 
-Automated trade management currently allows at most one open position and
-avoids writing a new request while `trade_request.json` already exists. It
-uses a fixed minimum volume of 0.50 lots and fixed entry stop/target distances
-of 15/30 price units. Position management can request a break-even stop after
-15 favorable price units and an ATR-based trailing stop after 25. These values
-are legacy implementation constants, not validated account- or
-contract-specific risk sizing.
+The engine only opens a new position when the account has no open positions.
+Automated entries use 0.50 lots and fixed stop/target distances of 15/30 price
+units, but are rejected if broker symbol constraints, margin, or calculated
+loss at the stop exceed configured limits. Management and early-exit rules are
+translated from `DashboardBridge.mq5`; they only manage positions on the
+configured symbol with magic number `123456`.
 
 ### Important behavior and known limitations
 
-- A live launch requires `MT5_COMMON_FILES_PATH`, but the path is not verified
-  to be a valid MT5 Common Files directory.
-- The engine reads `account_state.json` for account/position data. Missing
-  account data is displayed as empty; live order creation fails closed when
-  required risk or position metrics are absent.
-- `/api/execute-trade` applies the configured risk cap to the request's
-  `risk_pct` field. `risk_pct` is a fraction (`0.01` means 1%). This is not a
-  calculation of monetary loss at the stop price. The MT5 Expert Advisor must
-  independently calculate actual exposure using the account balance, volume,
-  stop distance, and current symbol contract specifications before executing.
-- The engine writes a JSON request file but does not wait for, parse, or verify
-  an MT5 acknowledgement or broker fill. An order API success means the
-  request was written, not that a trade was executed. The bridge should consume
-  and clear the pending request; while the file remains, automated orders are
-  blocked.
-- Local `trade_history.json` records dispatched request payloads, not confirmed
-  closed trades. The tracker expects closed-trade fields such as entry time,
+- Python reads the terminal's existing logged-in session; it does not store or
+  request account passwords. `MT5_TERMINAL_PATH` can point to `terminal64.exe`
+  if automatic discovery does not select the desired instance. `MT5_SYMBOL`
+  selects the exact broker symbol, defaulting to `Volatility 25 Index`.
+- The package reports account, position, and deal history directly from MT5.
+  Connection and Algo Trading permission are reported independently. Account
+  history day boundaries use the computer's local timezone and should be
+  reconciled with broker-day conventions before using the daily stop for
+  production.
+- `/api/execute-trade` checks calculated monetary loss at the requested stop
+  using MT5's contract-aware `order_calc_profit`, then validates broker lot
+  step/range, minimum stop distance, free margin, and MT5's `order_check`
+  response. An order is only reported successful after MT5 accepts it; this
+  does not guarantee a later fill.
+- Live trading stays disabled unless the process is explicitly started with
+  `--enable-live-trading` and the dashboard Start control is selected. Enabling
+  Algo Trading in MT5 alone does not enable this application's order path.
+- The tracker expects closed-trade fields such as entry time,
   exit, P&L, result, and balance. The trade-log page contains example/static
   initial KPI values (including a max-drawdown value that is not calculated).
   Some KPIs are recalculated when API data is available, but empty data leaves
   the initial examples visible. Treat these pages as prototypes until a real
   closed-trade schema and source are connected. The CSV is currently read as a
   fallback; the Python engine does not create it.
-- The dashboard's `agent_state.json` polling fallback is not kept current by
-  this engine. The intended live state path is the browser WebSocket.
+- The engine publishes its latest in-memory state both to the browser WebSocket
+  and through the no-cache `agent_state.json` endpoint. The dashboard can still
+  display stale information if connected to an older process serving port 8080.
+- This Python integration replaces the EA's account telemetry, order handling,
+  position management, and deal-history export. It does not install, compile,
+  or require any EA.
 - In the current flow, the multi-path strategy evaluator is invoked for
   automated decisions only when live trading is enabled and the engine is
   running. Data-only mode does not guarantee that the dashboard's strategy
@@ -158,72 +169,34 @@ contract-specific risk sizing.
   module. They are not credentials, but API endpoint/app-ID changes require a
   code update.
 
-## 3. Requirements for the MT5 bridge
+## 3. Direct Python MT5 connection
 
-The Python engine and an MT5 Expert Advisor must agree on JSON file formats and
-the meaning of each field. The bridge is a separate component and is not
-included in this repository.
+`mt5_bridge.py` uses the official `MetaTrader5` Python package to communicate
+with a locally installed terminal. It attaches to the logged-in terminal
+session; it does not use Common Files, account-state JSON, a socket service, or
+an Expert Advisor. Set `MT5_TERMINAL_PATH` when multiple terminals are installed
+or automatic selection chooses the wrong one. Never put an account password in
+the project or command line.
 
-### MT5 Common Files directory
+The MT5 terminal must be open and logged in. Its global Algo Trading setting
+and account-level trading permission must allow Python-originated requests for
+orders to be sent. The dashboard reflects the terminal connection and trading
+permission separately.
 
-Set `MT5_COMMON_FILES_PATH` to the exact Common Files directory shared with
-the Expert Advisor. The engine reads `account_state.json` and may read
-`trade_history.json` there. It writes `trade_request.json` there.
+### Converted `DashboardBridge.mq5` behavior
 
-### Account-state input
-
-At minimum, live order dispatch requires the following fields:
-
-```json
-{
-  "balance": 200.0,
-  "equity": 200.0,
-  "profit": 0.0,
-  "open_positions": 0,
-  "positions": [],
-  "daily_start_balance": 200.0,
-  "daily_pnl": 0.0
-}
-```
-
-`daily_start_balance` must be a positive number. `daily_pnl` must be the signed
-realized **plus floating** P&L since the broker's daily reset, in account
-currency. The timezone/reset convention and how pending commissions/swaps are
-counted must be agreed with the bridge. `positions` must be an array; position
-objects used by the dashboard/manager should include `type`, `price`, `sl`,
-`tp`, and `ticket` where applicable. `open_positions` must be a non-negative
-integer and should agree with the array length.
-
-The bridge should write complete, valid JSON atomically (write a temporary
-file, then replace the previous snapshot) so the engine does not read a partial
-file. That atomic-write approach is an integration requirement/recommendation;
-it is not implemented here.
-
-### Trade-request output
-
-An entry request is a JSON object with fields similar to:
-
-```json
-{
-  "timestamp": 1793900000,
-  "symbol": "Volatility 25 Index",
-  "action": "BUY",
-  "volume": 0.5,
-  "entry": 2785.0,
-  "tp": 2815.0,
-  "sl": 2770.0,
-  "risk_pct": 0.01,
-  "strategy_path": "Confluence Consensus Score: 65"
-}
-```
-
-`risk_pct` is a decimal fraction, not a percent integer. This example is
-illustrative, not a recommended order. Before execution, the MT5 Expert Advisor
-must validate the symbol, action, lot min/max/step, available margin,
-market/current price, SL/TP validity, duplicate requests, and worst-case loss.
-It should publish an acknowledgement/result contract so the dashboard can
-distinguish queued, accepted, rejected, filled, and failed orders. That
-acknowledgement contract is not yet implemented.
+- Account balance, equity, floating P/L, open positions, and daily P/L are
+  polled directly from the terminal.
+- Market orders are sent by Python with the requested SL and TP attached. MT5
+  symbol volume limits/steps, stop distance, margin, order-check result, and
+  monetary stop-loss exposure are validated first.
+- The EA's 1.5-ATR break-even, 2-ATR trailing, 3-ATR uncapped winner runner,
+  and 120-second ATR/EMA20 early-exit rules are managed from Python for symbol
+  `MT5_SYMBOL` and magic number `123456`.
+- Real deal history is queried directly from the terminal. The engine does not
+  invent historical RSI, trend, exit prices, or trade outcomes.
+- Live order placement and position management remain gated by the explicit
+  `--enable-live-trading` process option and dashboard Start control.
 
 ## 4. Python installation and local setup (Windows)
 
@@ -287,6 +260,7 @@ Direct runtime dependencies declared in `pyproject.toml`:
 | `pandas-ta` | EMA, RSI, ATR, ADX, Bollinger Bands, and Stochastic indicators | Unpinned |
 | `websocket-client` | Deriv WebSocket client | Unpinned |
 | `websockets` | Browser-facing WebSocket server | Unpinned |
+| `MetaTrader5` | Direct local terminal API for account data, orders, position management, and deals | `>=5.0.45` |
 
 The package build also uses `setuptools>=61.0`. Installing the project pulls
 the compatible transitive dependencies. The versions installed and tested in
@@ -316,10 +290,11 @@ The installed console entry point can also be used:
 
 ### Enable live order dispatch (advanced)
 
-Only proceed after configuring and testing the MT5 bridge contract above:
+Only proceed after verifying the logged-in terminal and broker symbol settings:
 
 ```powershell
-$env:MT5_COMMON_FILES_PATH = 'C:\path\to\MetaTrader\Terminal\Common\Files'
+$env:MT5_TERMINAL_PATH = 'C:\Program Files\MetaTrader 5\terminal64.exe'
+$env:MT5_SYMBOL = 'Volatility 25 Index'
 $env:MAX_RISK_PER_TRADE_PERCENT = '1'
 $env:MAX_DAILY_LOSS_PERCENT = '2'
 .\.venv\Scripts\python.exe .\Enhanced_Derive_AI_Engine.py --enable-live-trading
@@ -329,15 +304,13 @@ Live mode is opt-in for each process launch. Both risk settings accept numbers
 greater than 0 and up to 100; values are percentages. Defaults are 1.0% per
 trade and 2.0% daily loss. Invalid settings prevent the module from starting.
 The daily-loss calculation is `max(0, -daily_pnl / daily_start_balance * 100)`;
-new orders are blocked when that value reaches the configured cap. Missing,
-invalid, or unreadable account-state data blocks orders.
+new orders are blocked when that value reaches the configured cap. Missing
+terminal/account data blocks orders.
 
-The dashboard must also be set to Start. Manual requests that omit `risk_pct`
-receive the configured per-trade cap as a fraction. The engine checks that
-requested fraction does not exceed the cap, but only the EA can calculate and
-enforce actual monetary risk. Do not treat this setting as complete position
-sizing until the EA implements the corresponding calculation and reports its
-result.
+The dashboard must also be set to Start. The application calculates risk from
+the terminal's symbol contract and rejects any order whose stop-loss risk
+exceeds the configured percentage. This does not guarantee execution or remove
+market-gap/slippage risk.
 
 ### Tests and basic checks
 
@@ -366,15 +339,13 @@ and confirm live quotes/candles in the dashboard.
 
 | Setting/file | Purpose |
 |---|---|
-| `MT5_COMMON_FILES_PATH` | MT5 Common Files directory; defaults to `runtime\mt5_files` inside the project, which is not an MT5 installation. Required for live mode. |
-| `MAX_RISK_PER_TRADE_PERCENT` | Maximum request risk fraction expressed as a percentage; default `1`. |
+| `MT5_TERMINAL_PATH` | Optional path to `terminal64.exe`; uses package auto-discovery if unset. |
+| `MT5_SYMBOL` | Exact MT5 broker symbol; defaults to `Volatility 25 Index`. |
+| `MAX_RISK_PER_TRADE_PERCENT` | Maximum calculated stop-loss risk as a percentage of balance; default `1`. |
 | `MAX_DAILY_LOSS_PERCENT` | Daily realized-plus-floating loss threshold expressed as a percentage; default `2`. |
 | `credentials.json`, `token.pickle` | Local credential/token files; ignored by Git and not required for the current public market-data connection. |
-| `account_state.json` | MT5 account/position/daily-risk snapshot. |
-| `trade_request.json` | Pending MT5 request file. Remove/acknowledge only according to the agreed EA protocol. |
-| `trade_history.json` | Request log locally or trade-history source from MT5; current source schemas are not yet unified. |
-| `multi_timeframe_trade_log.csv` | Legacy analytics fallback; read by the HTTP route but not written by this engine. |
-| `agent_state.json` | Ignored legacy/dashboard fallback path; not written by the current engine. |
+| `mt5_bridge.py` | Direct MT5 account, order, position-management, and history API integration. |
+| `agent_state.json` | Ignored legacy file; the HTTP route returns current in-memory state instead. |
 
 `.gitignore` excludes the virtual environment, credentials, token, runtime
 account/order/history files, logs, and Python caches. Do not force-add secrets
@@ -400,14 +371,12 @@ default data-only mode and add tests with each trading-related change.
 
 - Agree on daily reset timezone, realized/floating P&L definition, account
   currency, and stale-data behavior with the MT5 bridge.
-- Make the EA independently enforce per-order monetary loss, max volume,
-  margin, daily stop, duplicate protection, and kill switch from actual symbol
-  contract specifications.
-- Replace file-exists-as-acknowledgement with request IDs, atomic writes,
-  explicit acknowledgement/result states, expiry, retry/idempotency behavior,
-  and audit logging.
-- Add validation for symbols, order type, entry, stop, target, volume, lot
-  steps, and allowed trading mode at both Python and EA boundaries.
+- Validate all order and position-management requests in Python against actual
+  symbol contract specifications and terminal/account trade permissions.
+- Add idempotency, explicit order lifecycle states, expiry, and audit logging
+  around direct MT5 requests.
+- Confirm broker-server daily reset semantics and reconcile the configured
+  loss limit's day boundary with the account's timezone.
 
 ### Phase 3 — Connection recovery and diagnostics
 
@@ -423,7 +392,7 @@ default data-only mode and add tests with each trading-related change.
 - Make data-only/live mode and stale/disconnected states unambiguous.
 - Remove stale static metrics and make all displayed account/trade data come
   from validated live or explicitly labeled sample data.
-- Replace or properly implement the `agent_state.json` polling fallback.
+- Verify the live-state polling fallback and WebSocket recovery on reconnect.
 - Bundle/pin frontend chart dependencies if offline operation is required.
 
 ### Phase 5 — Trade history and analytics

@@ -7,13 +7,14 @@ import threading
 import time
 import os
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 from datetime import timezone
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 import pandas as pd
 import pandas_ta as ta
 import websocket
+from mt5_bridge import MT5Bridge
 
 try:
     from websockets.sync.server import serve
@@ -24,12 +25,10 @@ except ImportError:
 DERIV_WS_URL = "wss://api.derivws.com/trading/v1/options/ws/public?app_id=1089"
 SYMBOL = "R_25"
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-MQL5_FILES_PATH = os.environ.get(
-    "MT5_COMMON_FILES_PATH",
-    os.path.join(PROJECT_DIR, "runtime", "mt5_files")
-)
-TRADE_LOG_FILE = os.path.join(PROJECT_DIR, "trade_history.json")
-CSV_TRADE_LOG = os.path.join(PROJECT_DIR, "multi_timeframe_trade_log.csv")
+DASHBOARD_PORT = int(os.environ.get("DASHBOARD_PORT", "8080"))
+WEBSOCKET_PORT = 8765 if DASHBOARD_PORT == 8080 else DASHBOARD_PORT + 1
+MT5_SYMBOL = os.environ.get("MT5_SYMBOL", "Volatility 25 Index")
+MT5_MAGIC_NUMBER = 123456
 
 def load_percentage_setting(name, default):
     try:
@@ -48,22 +47,11 @@ current_signal = "HOLD / SCANNING"
 current_price = 2785.007
 state_lock = threading.Lock()
 connected_ui_clients = set()
-
-def load_mt5_account_state():
-    account_file = os.path.join(MQL5_FILES_PATH, "account_state.json")
-    try:
-        with open(account_file, 'r') as account_stream:
-            account_state = json.load(account_stream)
-    except FileNotFoundError:
-        return None
-    except (OSError, json.JSONDecodeError) as error:
-        print(f"Unable to read MT5 account state: {error}")
-        return None
-
-    if not isinstance(account_state, dict):
-        print("Unable to read MT5 account state: expected a JSON object.")
-        return None
-    return account_state
+latest_state_payload = None
+mt5_bridge = MT5Bridge(symbol=MT5_SYMBOL)
+mt5_state_lock = threading.Lock()
+latest_mt5_account = {}
+latest_mt5_status = mt5_bridge.status()
 
 def check_daily_loss_limit(account_state):
     if not isinstance(account_state, dict):
@@ -385,10 +373,6 @@ def check_and_auto_trigger_trade(agent_state):
     if not LIVE_TRADING_ENABLED or agent_status != "RUNNING":
         return
 
-    request_file_path = os.path.join(MQL5_FILES_PATH, "trade_request.json")
-    if os.path.exists(request_file_path):
-        return  
-
     mt5_account = agent_state.get("mt5_account", {})
     risk_allowed, risk_message = check_daily_loss_limit(mt5_account)
     if not risk_allowed:
@@ -398,6 +382,9 @@ def check_and_auto_trigger_trade(agent_state):
             "active_paths": [],
             "reasoning": risk_message
         }
+        return
+
+    if not latest_mt5_status.get("trade_allowed"):
         return
 
     if mt5_account.get("open_positions", 0) > 0 or len(mt5_account.get("positions", [])) > 0:
@@ -416,132 +403,147 @@ def check_and_auto_trigger_trade(agent_state):
     agent_state["decision_audit"] = audit
 
     if action:
-        min_lot_size = 0.50
         stop_buffer = 15.0  
         take_profit_buffer = 30.0
 
         if action == "BUY":
-            sl = current_price - stop_buffer       
-            tp = current_price + take_profit_buffer  
+            sl = current_price - stop_buffer
+            tp = current_price + take_profit_buffer
         else: 
-            sl = current_price + stop_buffer       
-            tp = current_price - take_profit_buffer  
+            sl = current_price + stop_buffer
+            tp = current_price - take_profit_buffer
 
         payload = {
-            "timestamp": int(time.time()),
-            "symbol": "Volatility 25 Index",
+            "symbol": MT5_SYMBOL,
             "action": action,
-            "volume": min_lot_size,
+            "volume": 0.50,
             "entry": round(current_price, 4),
             "tp": round(tp, 4),
             "sl": round(sl, 4),
-            "risk_pct": MAX_RISK_PER_TRADE_PERCENT / 100.0,
             "strategy_path": f"Confluence Consensus Score: {audit['consensus_score']}"
         }
 
-        try:
-            os.makedirs(MQL5_FILES_PATH, exist_ok=True)
-            with open(request_file_path, "w") as f:
-                json.dump(payload, f, indent=4)
-            print(f"🚀 [AUTONOMOUS CONSENSUS] Executed {action} (Score: {audit['consensus_score']}) | Price: {current_price} | TP: {tp:.4f} | SL: {sl:.4f}")
-        except Exception as e:
-            print(f"❌ Failed to write trade request: {e}")
+        succeeded, message, result = mt5_bridge.place_market_order(
+            payload, MAX_RISK_PER_TRADE_PERCENT
+        )
+        agent_state["decision_audit"]["reasoning"] += (
+            f" | MT5 {message}" if succeeded else f" | Order rejected: {message}"
+        )
+        if succeeded:
+            print(
+                f"[AUTONOMOUS CONSENSUS] {action} {payload['volume']} lots "
+                f"on {MT5_SYMBOL}; order={result.get('order')}"
+            )
+        else:
+            print(f"ERROR: MT5 rejected autonomous {action}: {message}")
 
 def manage_active_trades(agent_state):
-    if not LIVE_TRADING_ENABLED:
+    if not LIVE_TRADING_ENABLED or not latest_mt5_status.get("trade_allowed"):
         return
 
     mt5_account = agent_state.get("mt5_account", {})
     positions = mt5_account.get("positions", [])
-    current_price = agent_state.get("current_price", 0.0)
-    
     tf_data = agent_state.get("timeframes", {}).get("5m", {})
-    atr = tf_data.get("atr", 1.0)
-
-    if not positions or current_price <= 0:
+    atr = float(tf_data.get("atr", 0.0))
+    ema20 = float(tf_data.get("ema20", 0.0))
+    if not positions or not math.isfinite(atr) or atr <= 0:
         return
 
-    request_file_path = os.path.join(MQL5_FILES_PATH, "trade_request.json")
-    if os.path.exists(request_file_path):
-        return  
+    import MetaTrader5 as mt5
 
     for pos in positions:
-        pos_type = pos.get("type", "BUY") 
-        entry_price = pos.get("price", current_price)
-        current_sl = pos.get("sl", 0.0)
-        current_tp = pos.get("tp", 0.0)
-        ticket = pos.get("ticket", 0)
+        if (
+            pos.get("symbol") != MT5_SYMBOL
+            or int(pos.get("magic", 0)) != MT5_MAGIC_NUMBER
+        ):
+            continue
 
-        profit_points = (current_price - entry_price) if pos_type == "BUY" else (entry_price - current_price)
+        ticket = int(pos["ticket"])
+        pos_type = pos["type"]
+        entry_price = float(pos["price"])
+        current_sl = float(pos["sl"])
+        current_tp = float(pos["tp"])
+        tick = mt5.symbol_info_tick(MT5_SYMBOL)
+        if tick is None:
+            continue
 
-        if profit_points >= 25.0:
-            trail_distance = max(10.0, atr * 1.5)
+        market_price = float(tick.bid if pos_type == "BUY" else tick.ask)
+        profit_points = (
+            market_price - entry_price
+            if pos_type == "BUY"
+            else entry_price - market_price
+        )
+        new_sl = None
+        new_tp = current_tp
+
+        if profit_points >= atr * 3.0:
+            new_sl = (
+                float(tick.bid) - atr * 2.0
+                if pos_type == "BUY"
+                else float(tick.ask) + atr * 2.0
+            )
+            new_tp = 0.0
+
+        if profit_points >= atr * 1.5 and new_sl is None:
+            if pos_type == "BUY" and current_sl < entry_price:
+                new_sl = entry_price + atr * 0.4
+            elif pos_type == "SELL" and (
+                current_sl > entry_price or current_sl == 0.0
+            ):
+                new_sl = entry_price - atr * 0.4
+        elif profit_points >= atr * 2.0 and new_sl is None:
             if pos_type == "BUY":
-                new_sl = round(current_price - trail_distance, 4)
-                if new_sl > current_sl + 1.0: 
-                    payload = {
-                        "timestamp": int(time.time()),
-                        "symbol": "Volatility 25 Index",
-                        "action": "MODIFY",
-                        "ticket": ticket,
-                        "tp": current_tp,
-                        "sl": new_sl,
-                        "reason": f"Smart Manager: ATR Trailing Stop ({new_sl})"
-                    }
-                    try:
-                        os.makedirs(MQL5_FILES_PATH, exist_ok=True)
-                        with open(request_file_path, "w") as f:
-                            json.dump(payload, f, indent=4)
-                        print(f"📈 [ATR TRAILING STOP] Tightened BUY SL for ticket #{ticket} to {new_sl:.4f}")
-                        return
-                    except Exception as e:
-                        print(f"❌ Failed to write trailing stop modification: {e}")
+                candidate_sl = float(tick.bid) - atr * 2.0
+                if candidate_sl > current_sl + atr * 0.2:
+                    new_sl = candidate_sl
+            else:
+                candidate_sl = float(tick.ask) + atr * 2.0
+                if current_sl == 0.0 or candidate_sl < current_sl - atr * 0.2:
+                    new_sl = candidate_sl
 
-            elif pos_type == "SELL":
-                new_sl = round(current_price + trail_distance, 4)
-                if current_sl == 0.0 or new_sl < current_sl - 1.0: 
-                    payload = {
-                        "timestamp": int(time.time()),
-                        "symbol": "Volatility 25 Index",
-                        "action": "MODIFY",
-                        "ticket": ticket,
-                        "tp": current_tp,
-                        "sl": new_sl,
-                        "reason": f"Smart Manager: ATR Trailing Stop ({new_sl})"
-                    }
-                    try:
-                        os.makedirs(MQL5_FILES_PATH, exist_ok=True)
-                        with open(request_file_path, "w") as f:
-                            json.dump(payload, f, indent=4)
-                        print(f"📉 [ATR TRAILING STOP] Tightened SELL SL for ticket #{ticket} to {new_sl:.4f}")
-                        return
-                    except Exception as e:
-                        print(f"❌ Failed to write trailing stop modification: {e}")
+        if new_sl is not None:
+            succeeded, message, _ = mt5_bridge.modify_position(
+                ticket, new_sl, new_tp
+            )
+            if not succeeded:
+                print(f"ERROR: MT5 could not modify position {ticket}: {message}")
+            continue
 
-        elif profit_points >= 15.0:
-            breakeven_sl = entry_price
-            is_sl_at_be = abs(current_sl - entry_price) < 0.5
-            
-            if not is_sl_at_be and ((pos_type == "BUY" and current_sl < entry_price) or (pos_type == "SELL" and (current_sl > entry_price or current_sl == 0.0))):
-                payload = {
-                    "timestamp": int(time.time()),
-                    "symbol": "Volatility 25 Index",
-                    "action": "MODIFY",
-                    "ticket": ticket,
-                    "tp": current_tp,
-                    "sl": round(breakeven_sl, 4),
-                    "reason": "Smart Manager: Lock Break-Even"
-                }
-                try:
-                    os.makedirs(MQL5_FILES_PATH, exist_ok=True)
-                    with open(request_file_path, "w") as f:
-                        json.dump(payload, f, indent=4)
-                    print(f"🛡️ [SMART MANAGER] Locking Break-Even for ticket #{ticket} at entry {entry_price}")
-                except Exception as e:
-                    print(f"❌ Failed to write break-even modification: {e}")
+        opened_at = datetime.fromtimestamp(
+            int(pos["time"]), tz=datetime.now().astimezone().tzinfo
+        )
+        age_seconds = (datetime.now().astimezone() - opened_at).total_seconds()
+        if age_seconds < 120 or float(pos["profit"]) >= 0 or ema20 <= 0:
+            continue
+
+        current_tick = float(tick.bid if pos_type == "BUY" else tick.ask)
+        breached_structure = (
+            current_tick < ema20 - atr * 0.8
+            if pos_type == "BUY"
+            else current_tick > ema20 + atr * 0.8
+        )
+        if breached_structure:
+            succeeded, message, _ = mt5_bridge.close_position(ticket)
+            if not succeeded:
+                print(f"ERROR: MT5 could not close position {ticket}: {message}")
+            else:
+                print(f"[EARLY EXIT] Closed losing MT5 position {ticket}.")
+
+def refresh_mt5_state():
+    global latest_mt5_account, latest_mt5_status
+    account, status = mt5_bridge.account_snapshot()
+    with mt5_state_lock:
+        latest_mt5_account = account or {}
+        latest_mt5_status = status
+
+def mt5_monitor_loop():
+    while True:
+        refresh_mt5_state()
+        time.sleep(1)
 
 def broadcast_state_update():
-    """Real-time push broadcast: replaces disk-polling agent_state.json with direct WebSocket streaming."""
+    """Build the latest engine snapshot and publish it to connected clients."""
+    global latest_state_payload
     with state_lock:
         timeframes_dict = {}
         for tf, df in tf_caches.items():
@@ -553,7 +555,9 @@ def broadcast_state_update():
         daily_df = tf_caches.get('d1')
         cpr_dict = calculate_cpr(daily_df)
 
-        mt5_account_data = load_mt5_account_state() or {}
+        with mt5_state_lock:
+            mt5_account_data = dict(latest_mt5_account)
+            mt5_status = dict(latest_mt5_status)
 
         state_data = {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -563,6 +567,7 @@ def broadcast_state_update():
             "cpr": cpr_dict,
             "timeframes": timeframes_dict,
             "mt5_account": mt5_account_data,
+            "mt5_bridge": mt5_status,
             "vix25_specs": {
                 "min_lot": 0.50,
                 "max_lot": 200.00,
@@ -580,6 +585,7 @@ def broadcast_state_update():
         check_and_auto_trigger_trade(state_data)
 
         payload_str = json.dumps(state_data)
+        latest_state_payload = payload_str
         
         # Thread-safe client snapshot copy
         clients_snapshot = list(connected_ui_clients)
@@ -670,7 +676,7 @@ def on_message(ws, message):
                     tf_caches[target_tf] = temp_df
                 broadcast_state_update()
     except Exception as e:
-        print(f"❌ Error on_message: {e}")
+        print(f"ERROR: on_message: {e}")
         traceback.print_exc()
         
 def on_error(ws, error):
@@ -681,7 +687,7 @@ active_deriv_ws = None
 def on_open(ws):
     global active_deriv_ws
     active_deriv_ws = ws
-    print("🟢 Connected successfully to Deriv Options Public WebSocket API!")
+    print("Connected successfully to Deriv Options Public WebSocket API!")
     
     for tf, gran in TF_GRANULARITY.items():
         history_req = {
@@ -701,7 +707,7 @@ def on_open(ws):
 def on_close(ws, close_status_code, close_msg):
     global active_deriv_ws
     active_deriv_ws = None
-    print(f"⚠️ Deriv Options WS Closed (Code: {close_status_code}). Reconnecting in 3 seconds...")
+    print(f"Deriv Options WS closed (code: {close_status_code}). Reconnecting in 3 seconds...")
 
 def start_deriv_ws():
     global active_deriv_ws
@@ -722,9 +728,9 @@ def start_deriv_ws():
             )
             ws.run_forever(ping_interval=30, ping_timeout=10)
         except Exception as e:
-            print(f"❌ Deriv WS Exception: {e}")
+            print(f"ERROR: Deriv WS exception: {e}")
         
-        print(f"🔄 Retrying Deriv connection in {retry_delay} seconds...")
+        print(f"Retrying Deriv connection in {retry_delay} seconds...")
         time.sleep(retry_delay)
         retry_delay = min(retry_delay * 1.5, 30)
 
@@ -745,7 +751,10 @@ class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
         self.wfile.write(json.dumps(response).encode('utf-8'))
 
     def _is_local_dashboard_request(self):
-        allowed_hosts = {'localhost:8080', '127.0.0.1:8080'}
+        allowed_hosts = {
+            f'localhost:{DASHBOARD_PORT}',
+            f'127.0.0.1:{DASHBOARD_PORT}'
+        }
         host = self.headers.get('Host', '').lower()
         origin = self.headers.get('Origin')
         return (
@@ -761,36 +770,53 @@ class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
             self.path = '/tracker.html'
         elif path == '/tradelog':
             self.path = '/tradelog.html'
-        elif path == '/api/tradelog-data':
+        elif path == '/agent_state.json':
+            payload = latest_state_payload
+            if payload is None:
+                payload = json.dumps({
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "agent_status": agent_status,
+                    "current_price": None,
+                    "signal": current_signal,
+                    "mt5_account": {},
+                    "mt5_bridge": latest_mt5_status,
+                    "timeframes": {},
+                    "cpr": {},
+                    "decision_audit": {
+                        "regime": "SCANNING",
+                        "consensus_score": 0,
+                        "active_paths": [],
+                        "reasoning": "Waiting for market data."
+                    }
+                })
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
+            self.send_header('Cache-Control', 'no-store')
             self.end_headers()
-            
-            trades = []
-            mt5_trade_history_path = os.path.join(MQL5_FILES_PATH, "trade_history.json")
-            target_path = mt5_trade_history_path if os.path.exists(mt5_trade_history_path) else TRADE_LOG_FILE
-            
-            if os.path.exists(target_path):
-                try:
-                    with open(target_path, 'r') as f:
-                        trades = json.load(f)
-                except Exception as e:
-                    trades = []
-                    
-            if not trades and os.path.exists(CSV_TRADE_LOG):
-                df = pd.read_csv(CSV_TRADE_LOG)
-                df = df.where(pd.notnull(df), None)
-                trades = df.to_dict(orient='records')
-                
+            self.wfile.write(payload.encode('utf-8'))
+            return
+        elif path == '/api/tradelog-data':
+            trades = mt5_bridge.trade_history()
+            if trades is None:
+                status = mt5_bridge.status()
+                self._send_json(503, {
+                    "status": "UNAVAILABLE",
+                    "message": status["detail"]
+                })
+                return
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
             self.wfile.write(json.dumps(trades).encode('utf-8'))
             return
-        elif path not in ('/index.html', '/tracker.html', '/tradelog.html', '/agent_state.json'):
+        elif path not in ('/index.html', '/tracker.html', '/tradelog.html'):
             self.send_error(404)
             return
         return SimpleHTTPRequestHandler.do_GET(self)
 
     def do_POST(self):
-        global agent_status
+        global agent_status, latest_mt5_account, latest_mt5_status
         if not self._is_local_dashboard_request():
             self.send_error(403, "Requests must originate from the local dashboard.")
             return
@@ -847,7 +873,10 @@ class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
                 self._send_json(403, {"status": "REJECTED", "message": risk_error})
                 return
 
-            account_state = load_mt5_account_state()
+            account_state, bridge_status = mt5_bridge.account_snapshot()
+            with mt5_state_lock:
+                latest_mt5_account = account_state or {}
+                latest_mt5_status = bridge_status
             risk_allowed, risk_message = check_daily_loss_limit(account_state)
             if not risk_allowed:
                 self._send_json(503, {
@@ -880,32 +909,36 @@ class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
                 })
                 return
 
-            payload["risk_pct"] = risk_percent
-            
-            request_file = os.path.join(MQL5_FILES_PATH, "trade_request.json")
-            os.makedirs(MQL5_FILES_PATH, exist_ok=True)
-            with open(request_file, 'w') as f:
-                json.dump(payload, f)
+            if not bridge_status.get("trade_allowed"):
+                self._send_json(503, {
+                    "status": "REJECTED",
+                    "message": bridge_status.get("detail", "MT5 trading is unavailable.")
+                })
+                return
 
-            history = []
-            if os.path.exists(TRADE_LOG_FILE):
-                with open(TRADE_LOG_FILE, 'r') as f:
-                    try: history = json.load(f)
-                    except: history = []
-            
-            history.append(payload)
-            with open(TRADE_LOG_FILE, 'w') as f:
-                json.dump(history, f, indent=2)
+            payload["symbol"] = payload.get("symbol") or MT5_SYMBOL
+            payload["risk_pct"] = risk_percent
+            succeeded, message, result = mt5_bridge.place_market_order(
+                payload, risk_percent * 100.0
+            )
+            if not succeeded:
+                self._send_json(400, {
+                    "status": "REJECTED",
+                    "message": message,
+                    "mt5_result": result
+                })
+                return
 
             self._send_json(200, {
                 "status": "SUCCESS",
-                "message": "Order dispatched to MT5 with the configured risk cap."
+                "message": message,
+                "mt5_result": result
             })
         else:
             self.send_error(404)
 
 def run_websocket_server():
-    """Runs the standalone WS server for real-time UI streaming on port 8765."""
+    """Runs the standalone WS server for real-time UI streaming."""
     def handler(websocket_conn):
         connected_ui_clients.add(websocket_conn)
         try:
@@ -920,8 +953,11 @@ def run_websocket_server():
         with serve(
             handler,
             "127.0.0.1",
-            8765,
-            origins=["http://localhost:8080", "http://127.0.0.1:8080"]
+            WEBSOCKET_PORT,
+            origins=[
+                f"http://localhost:{DASHBOARD_PORT}",
+                f"http://127.0.0.1:{DASHBOARD_PORT}"
+            ]
         ) as server:
             server.serve_forever()
     except Exception as e:
@@ -939,22 +975,30 @@ def main():
     LIVE_TRADING_ENABLED = args.enable_live_trading
 
     if LIVE_TRADING_ENABLED:
-        if not os.environ.get("MT5_COMMON_FILES_PATH"):
-            parser.error("--enable-live-trading requires MT5_COMMON_FILES_PATH to point to the MT5 Common\\Files directory.")
-        print("LIVE TRADING ENABLED for this run. Use the dashboard Start control to activate the engine.")
+        if not mt5_bridge.connect():
+            parser.error(f"Cannot enable live trading: {mt5_bridge.status()['detail']}")
+        print("LIVE TRADING ENABLED for this run. Use the dashboard Start control to activate trading.")
     else:
-        print("Live trading is disabled. Market data and dashboard remain available.")
+        print("Live order execution is disabled. MT5 account data remains read-only.")
 
     print("Initializing initial agent state cache...")
     
+    refresh_mt5_state()
     threading.Thread(target=start_deriv_ws, daemon=True).start()
     threading.Thread(target=deriv_heartbeat_loop, daemon=True).start()
+    threading.Thread(target=mt5_monitor_loop, daemon=True).start()
     threading.Thread(target=run_websocket_server, daemon=True).start()
     
-    server_address = ('127.0.0.1', 8080)
-    print("Serving HTTP Dashboard on http://localhost:8080 with Real-Time WebSocket Push Streaming...")
+    server_address = ('127.0.0.1', DASHBOARD_PORT)
+    print(
+        f"Serving HTTP Dashboard on http://localhost:{DASHBOARD_PORT} "
+        f"with WebSocket push streaming on port {WEBSOCKET_PORT}..."
+    )
     request_handler = functools.partial(CustomHTTPRequestHandler, directory=PROJECT_DIR)
-    HTTPServer(server_address, request_handler).serve_forever()
+    try:
+        ThreadingHTTPServer(server_address, request_handler).serve_forever()
+    finally:
+        mt5_bridge.disconnect()
 
 if __name__ == '__main__':
     main()

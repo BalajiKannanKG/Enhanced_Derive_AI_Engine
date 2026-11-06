@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Actionable Trading Agent - VIX 25 & MT5 MetaAPI Mode</title>
+    <title>Actionable Trading Agent - VIX 25</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
@@ -146,12 +146,12 @@
         <div class="matrix-card"><span class="matrix-title">D1</span><span id="matrix-status-d1" class="matrix-status status-flat">---</span><span id="matrix-timer-d1" class="matrix-timer">00:00</span></div>
     </div>
 
-    <!-- Top Status Bar with MetaAPI / MT5 Integration Card -->
+    <!-- Top Status Bar with MT5 File Bridge Card -->
     <div class="top-grid">
         <div class="card" style="padding: 3px 5px;">
             <div style="display:flex; justify-content:space-between; align-items:center;">
                 <span style="font-size:0.6rem; font-weight:bold; color:var(--accent-cyan);">Agent Status:</span>
-                <span id="agentStatusBadge" class="badge" style="color:var(--accent-green);">RUNNING</span>
+                <span id="agentStatusBadge" class="badge" style="color:var(--accent-yellow);">CONNECTING...</span>
             </div>
             <div class="controls-row">
                 <button class="btn btn-start" onclick="sendControl('START')">▶ START</button>
@@ -168,15 +168,15 @@
             <div class="metric-row"><span>TC / P / BC:</span> <span class="metric-value" style="color:var(--accent-cyan);" id="cpr-zones">---</span></div>
         </div>
 
-        <!-- MetaAPI MT5 Real-time Account Telemetry -->
+        <!-- MT5 file-bridge account telemetry -->
         <div class="card" style="padding: 3px 5px; border-color: var(--accent-cyan);">
             <h3 style="margin-bottom:1px;">
-                <span>🔗 MT5 Live Bridge</span>
-                <span id="mt5-status-badge" class="badge" style="color:var(--accent-green);">CONNECTED</span>
+                <span>🔗 MT5 File Bridge</span>
+                <span id="mt5-status-badge" class="badge" style="color:var(--accent-red);">NOT CONFIGURED</span>
             </h3>
-            <div class="metric-row"><span>Balance / Equity:</span> <span class="metric-value"><span id="mt5-balance">$0.00</span> / <span id="mt5-equity" style="color:var(--accent-cyan);">$0.00</span></span></div>
-            <div class="metric-row"><span>Open Pos / Floating P/L:</span> <span class="metric-value"><span id="mt5-open-pos">0 Trades</span> / <span id="mt5-floating-pnl" style="color:var(--accent-green);">$0.00</span></span></div>
-            <div class="metric-row"><span>Today's Realized P/L:</span> <span class="metric-value" id="mt5-today-pnl" style="color:var(--accent-green); font-weight:bold;">+$0.00</span></div>
+            <div class="metric-row"><span>Balance / Equity:</span> <span class="metric-value"><span id="mt5-balance">--</span> / <span id="mt5-equity" style="color:var(--accent-cyan);">--</span></span></div>
+            <div class="metric-row"><span>Open Pos / Floating P/L:</span> <span class="metric-value"><span id="mt5-open-pos">--</span> / <span id="mt5-floating-pnl" style="color:var(--text-muted);">--</span></span></div>
+            <div class="metric-row"><span>Today's Net P/L:</span> <span class="metric-value" id="mt5-today-pnl" style="color:var(--text-muted); font-weight:bold;">--</span></div>
         </div>
     </div>
 
@@ -241,7 +241,7 @@
             <div class="card" style="flex: 1.3; min-height: 0;">
                 <h3>
                     <span>🧮 VIX 25 Capital & Safe Lot Calculator</span>
-                    <span id="plan-date-tag" class="badge" style="color:var(--accent-yellow);">MT5 Connected</span>
+                    <span id="plan-date-tag" class="badge" style="color:var(--accent-red);">NOT CONNECTED</span>
                 </h3>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
                     <span style="font-size:0.6rem; font-weight:bold;">Available Capital ($):</span>
@@ -354,6 +354,7 @@
         let stochChartInstance = null;
         let activeSrTargetVal = 0;
         let currentLivePrice = 0;
+        let uiWebSocketConnected = false;
         let selectedTimeframe = '5m';
         let candleIntervalSeconds = 300;
         
@@ -843,6 +844,55 @@
             }, 1000);
         }
 
+        function renderMt5State(data) {
+            const bridge = data.mt5_bridge || {};
+            const account = data.mt5_account || {};
+            const badge = document.getElementById('mt5-status-badge');
+            const calculatorBadge = document.getElementById('plan-date-tag');
+            const label = bridge.status || 'STATUS UNKNOWN';
+            badge.innerText = label;
+            calculatorBadge.innerText = bridge.connection_verified ? 'MT5 VERIFIED' : 'NOT CONNECTED';
+            calculatorBadge.style.color = bridge.connection_verified ? 'var(--accent-green)' : 'var(--accent-red)';
+            badge.title = bridge.connection_verified
+                ? 'MT5 connection verified'
+                : (bridge.detail || 'The engine uses a file bridge and cannot verify an MT5 terminal connection.');
+            badge.style.color = bridge.connection_verified
+                ? 'var(--accent-green)'
+                : (bridge.state_available ? 'var(--accent-yellow)' : 'var(--accent-red)');
+
+            if (!bridge.state_available) {
+                document.getElementById('mt5-balance').innerText = '--';
+                document.getElementById('mt5-equity').innerText = '--';
+                document.getElementById('mt5-open-pos').innerText = '--';
+                document.getElementById('mt5-floating-pnl').innerText = '--';
+                document.getElementById('mt5-today-pnl').innerText = '--';
+                return;
+            }
+
+            const balance = Number(account.balance);
+            const equity = Number(account.equity);
+            const positions = Number(account.open_positions);
+            const floatingPnl = Number(account.profit ?? account.floating_pnl);
+            const dailyPnl = Number(account.daily_pnl);
+            document.getElementById('mt5-balance').innerText = Number.isFinite(balance) ? `$${balance.toFixed(2)}` : '--';
+            document.getElementById('mt5-equity').innerText = Number.isFinite(equity) ? `$${equity.toFixed(2)}` : '--';
+            document.getElementById('mt5-open-pos').innerText = Number.isFinite(positions) ? `${positions} Trades` : '--';
+
+            const floatPnlEl = document.getElementById('mt5-floating-pnl');
+            floatPnlEl.innerText = Number.isFinite(floatingPnl) ? `$${floatingPnl.toFixed(2)}` : '--';
+            floatPnlEl.style.color = Number.isFinite(floatingPnl)
+                ? (floatingPnl >= 0 ? 'var(--accent-green)' : 'var(--accent-red)')
+                : 'var(--text-muted)';
+            document.getElementById('mt5-today-pnl').innerText = Number.isFinite(dailyPnl)
+                ? `$${dailyPnl.toFixed(2)}`
+                : '--';
+
+            const capitalInput = document.getElementById('calcCapitalInput');
+            if (capitalInput && !window.userManuallyChangedCapital && balance > 0) {
+                capitalInput.value = balance.toFixed(2);
+            }
+        }
+
         async function fetchDashboardData() {
             try {
                 const res = await fetch('agent_state.json?t=' + Date.now());
@@ -882,25 +932,7 @@
                     }
                 }
 
-                if (globalData.mt5_account) {
-                    const bal = globalData.mt5_account.balance || 0;
-                    const eq = globalData.mt5_account.equity || 0;
-                    const openPos = globalData.mt5_account.open_positions || 0;
-                    const floatPnl = globalData.mt5_account.profit || globalData.mt5_account.floating_pnl || 0;
-
-                    document.getElementById('mt5-balance').innerText = `$${bal.toFixed(2)}`;
-                    document.getElementById('mt5-equity').innerText = `$${eq.toFixed(2)}`;
-                    document.getElementById('mt5-open-pos').innerText = `${openPos} Trades`;
-                    
-                    const floatPnlEl = document.getElementById('mt5-floating-pnl');
-                    floatPnlEl.innerText = `$${floatPnl.toFixed(2)}`;
-                    floatPnlEl.style.color = floatPnl >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
-                    
-                    const capitalInput = document.getElementById('calcCapitalInput');
-                    if (capitalInput && !window.userManuallyChangedCapital && bal > 0) {
-                        capitalInput.value = bal.toFixed(2);
-                    }
-                }
+                renderMt5State(globalData);
 
                 if (globalData.cpr) {
                     const cpr = globalData.cpr;
@@ -1440,18 +1472,24 @@
             }
         }
 
-        // Connect to Python Backend WebSocket Push Stream (Port 8765)
+        // Keep the default ports compatible while allowing side-by-side local instances.
         function connectUIWebSocket() {
-            const ws = new WebSocket('ws://localhost:8765');
+            const dashboardPort = Number(window.location.port) || 80;
+            const wsPort = dashboardPort === 8080 ? 8765 : dashboardPort + 1;
+            const ws = new WebSocket(`ws://${window.location.hostname}:${wsPort}`);
 
             ws.onopen = function() {
+                uiWebSocketConnected = true;
                 console.log("🔗 Connected to Agent Real-Time Push Stream");
-                document.getElementById('last-update').innerText = "Status: Live Stream Active";
+                document.getElementById('last-update').innerText = "Connected; waiting for state...";
             };
 
             ws.onmessage = function(event) {
                 globalData = JSON.parse(event.data);
                 document.getElementById('last-update').innerText = `Synced: ${globalData.timestamp}`;
+                if (globalData.agent_status) {
+                    document.getElementById('agentStatusBadge').innerText = globalData.agent_status;
+                }
                 
                 if (globalData.current_price) {
                     currentLivePrice = globalData.current_price;
@@ -1478,25 +1516,7 @@
                     // 4. Update Detailed Reasoning Audit
                     document.getElementById('audit-reasoning').innerText = audit.reasoning || "Analyzing market conditions...";
                 }
-                if (globalData.mt5_account) {
-                    const bal = globalData.mt5_account.balance || 0;
-                    const eq = globalData.mt5_account.equity || 0;
-                    const openPos = globalData.mt5_account.open_positions || 0;
-                    const floatPnl = globalData.mt5_account.profit || globalData.mt5_account.floating_pnl || 0;
-
-                    document.getElementById('mt5-balance').innerText = `$${bal.toFixed(2)}`;
-                    document.getElementById('mt5-equity').innerText = `$${eq.toFixed(2)}`;
-                    document.getElementById('mt5-open-pos').innerText = `${openPos} Trades`;
-                    
-                    const floatPnlEl = document.getElementById('mt5-floating-pnl');
-                    floatPnlEl.innerText = `$${floatPnl.toFixed(2)}`;
-                    floatPnlEl.style.color = floatPnl >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
-                    
-                    const capitalInput = document.getElementById('calcCapitalInput');
-                    if (capitalInput && !window.userManuallyChangedCapital && bal > 0) {
-                        capitalInput.value = bal.toFixed(2);
-                    }
-                }
+                renderMt5State(globalData);
 
                 if (globalData.cpr) {
                     const cpr = globalData.cpr;
@@ -1525,6 +1545,7 @@
             };
 
             ws.onclose = function() {
+                uiWebSocketConnected = false;
                 console.log("⚠️ Push Stream disconnected. Reconnecting in 1s...");
                 document.getElementById('last-update').innerText = "Status: Reconnecting...";
                 setTimeout(connectUIWebSocket, 1000);
@@ -1536,6 +1557,10 @@
         }
 
         // Initialize WebSocket Push & Candle Countdowns
+        fetchDashboardData();
+        setInterval(() => {
+            if (!uiWebSocketConnected) fetchDashboardData();
+        }, 3000);
         connectUIWebSocket();
         startCountdowns();
     </script>

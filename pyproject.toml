@@ -10,10 +10,11 @@ dependencies = [
     "pandas-ta",
     "websocket-client",
     "websockets",
+    "MetaTrader5>=5.0.45",
 ]
 
 [tool.setuptools]
-py-modules = ["Enhanced_Derive_AI_Engine"]
+py-modules = ["Enhanced_Derive_AI_Engine", "mt5_bridge"]
 
 [project.scripts]
 run-engine = "Enhanced_Derive_AI_Engine:main"

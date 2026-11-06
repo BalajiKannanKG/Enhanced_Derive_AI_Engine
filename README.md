@@ -15,24 +15,26 @@ that still need design or independent validation.
 
 ### Purpose
 
-The application connects to Deriv market data for the `R_25` synthetic index,
-calculates multi-timeframe indicators and strategy signals, and serves a local
-browser dashboard. An optional direct connection sends requests to a locally
-running MetaTrader 5 terminal through the official Python package. The
-application does not require or install an Expert Advisor.
+The application connects to Deriv market data for the Volatility 10, 25, 50,
+and 100 indices (`R_10`, `R_25`, `R_50`, and `R_100`), calculates
+multi-timeframe indicators and strategy signals, and serves a local browser
+dashboard. The dashboard selector changes the displayed symbol; automated
+trading evaluates all four supported symbols. An optional direct connection
+sends requests to a locally running MetaTrader 5 terminal through the official
+Python package. The application does not require or install an Expert Advisor.
 
 ### Requirements captured so far
 
 | Area | Requirement / current decision |
 |---|---|
-| Market data | Deriv public WebSocket market data for `R_25`; historical candles followed by live ticks. |
+| Market data | Deriv public WebSocket market data for `R_10`, `R_25`, `R_50`, and `R_100`; historical candles followed by per-symbol live ticks. |
 | Timeframes | 3m, 5m, 15m, 30m, 1h, 4h, and 1d. Request up to 300 historical candles per timeframe; keep recent candles in memory. |
 | Dashboard | Local live chart and indicators, market/strategy status, account/position display, manual order controls, day tracker, and trade log pages. |
 | Order routing | Optional direct order submission through the official MetaTrader5 Python API to an already installed, logged-in terminal. |
 | Local safety | Default to read-only account data; require `--enable-live-trading` and dashboard Start before order submission. Bind HTTP and browser WebSocket services to loopback. |
-| Risk controls | Per-trade monetary stop-loss risk cap (default 1%) and daily realized-plus-floating loss stop (default 2%). Missing or invalid live account data blocks new orders. |
+| Risk controls | At most one open position across the portfolio, a per-trade monetary stop-loss risk cap (default 1%), and a daily realized-plus-floating loss stop (default 2%). Missing or invalid live account data blocks new orders. |
 | Trade management | Python ports the provided bridge's magic-number-filtered ATR break-even/trailing stops, early structural exits, and live deal-history export. |
-| Future history source | Begin with Deriv API candle history for any future backtest feature. MT5 deal history is available through the direct terminal API; backtesting remains unimplemented. |
+| Historical replay | Standalone MT5 OHLC backtest for the current multi-symbol strategy; results are simulated and are not broker fills. |
 | Deployment | Run on the user's Windows computer for now. Network/public hosting, authentication, and multi-user operation are out of scope until separately designed. |
 
 These are the decisions captured in the current project conversation; confirm
@@ -46,8 +48,9 @@ them before implementing a feature that changes trading behavior.
 background threads for:
 
 1. A Deriv WebSocket client. On connection it requests candle history for each
-   configured granularity, then subscribes to live `R_25` ticks. It retries
-   after a disconnect with an increasing delay.
+   configured granularity and all four supported symbols, then subscribes to
+   each symbol's live ticks. It retries after a disconnect with an increasing
+   delay.
 2. A heartbeat loop for the Deriv connection.
 3. A browser-facing WebSocket server on `127.0.0.1:8765` by default, which broadcasts
    market and account state.
@@ -81,7 +84,8 @@ reverse proxy, or public tunnel.
 
 ### Market data and indicators
 
-The engine builds OHLC candles from Deriv history and live ticks. It calculates
+The engine builds separate OHLC candle caches from Deriv history and live ticks
+for each supported symbol. It calculates
 EMA 20/30/100/200, RSI 14, ATR 14, ADX 14, Bollinger Bands (length 16, standard
 deviation 1.986), Stochastic (14,3), candle-pattern labels, previous-day open
 and close, and CPR pivot/support/resistance levels.
@@ -103,11 +107,11 @@ Automated entry is currently based on 5m data with 1h trend context. Indicator
 parameters, thresholds, stop distances, and trade sizing are code-level
 settings, not yet a user-configurable strategy system.
 
-If fewer than five candles are available for a timeframe, the dashboard data
-builder supplies synthetic fallback candles and default indicator values. Those
-are display placeholders, not real market history; confirm live feed and
-history have arrived before relying on chart or signal output. Candle caches
-are in memory and are not a durable market-data store.
+If fewer than five candles are available for a timeframe, indicators are
+reported as unavailable rather than replaced with synthetic price history.
+Confirm the selected symbol's live feed and history have arrived before
+relying on chart or signal output. Candle caches are in memory and are not a
+durable market-data store.
 
 ### Trading modes and controls
 
@@ -120,20 +124,28 @@ are in memory and are not a durable market-data store.
   logged-in MT5 terminal must permit Python/API trading. The dashboard starts
   ready for manual orders; each button click asks for a lot volume and a final
   browser confirmation before submitting a real order. The server independently
-  rechecks the MT5 quote, open positions, available margin, symbol volume rules,
-  stop/target direction, and configured monetary risk limits.
+  calculates stop/target from the current MT5 quote and timeframe ATR, then
+  rechecks open positions, available margin, symbol volume rules, minimum stop
+  distance, and configured monetary risk limits.
 - **Automated entries:** Off by default, including in manual live mode. They
   require the additional `--enable-auto-trading` flag together with
-  `--enable-live-trading`. Do not use this flag for manual-only trading.
+  `--enable-live-trading`. Entry conditions are evaluated independently for
+  each newly completed 5-minute candle on all four supported symbols; after
+  startup, the engine waits for the next completed candle before its first
+  automated decision. Orders use each symbol's completed-candle ATR for
+  stop/target distances (1.5x/3x ATR) and the configured risk cap to choose a
+  broker-valid volume subject to available margin. The one-position portfolio
+  limit prevents overlapping entries. Do not use this flag for manual-only
+  trading.
 - **Position management:** In a live run, existing break-even/trailing and
-  early-exit rules may modify positions for the configured symbol and magic
+  early-exit rules may modify supported-symbol positions opened with magic
   number `123456`; they do not manage unrelated MT5 positions.
 - **Paused/stopped:** Dashboard controls update the in-memory engine status.
   These states are not persisted across restarts.
 
 The engine only submits a new position when the account has no open positions.
-Automated entries use 0.50 lots and fixed stop/target distances of 15/30 price
-units, but are rejected if broker symbol constraints, margin, or calculated
+Automated entries use symbol-specific ATR distances and broker-calculated
+volume, and are rejected if broker symbol constraints, margin, or calculated
 loss at the stop exceed configured limits. Management and early-exit rules are
 translated from `DashboardBridge.mq5`.
 
@@ -142,7 +154,8 @@ translated from `DashboardBridge.mq5`.
 - Python reads the terminal's existing logged-in session; it does not store or
   request account passwords. `MT5_TERMINAL_PATH` can point to `terminal64.exe`
   if automatic discovery does not select the desired instance. `MT5_SYMBOL`
-  selects the exact broker symbol, defaulting to `Volatility 25 Index`.
+  selects the default dashboard symbol, defaulting to `Volatility 25 Index`;
+  the dashboard can display any of the four supported indices.
 - The package reports account, position, and deal history directly from MT5.
   Connection and Algo Trading permission are reported independently. Account
   history day boundaries use the computer's local timezone and should be
@@ -200,8 +213,8 @@ permission separately.
   symbol volume limits/steps, stop distance, margin, order-check result, and
   monetary stop-loss exposure are validated first.
 - The EA's 1.5-ATR break-even, 2-ATR trailing, 3-ATR uncapped winner runner,
-  and 120-second ATR/EMA20 early-exit rules are managed from Python for symbol
-  `MT5_SYMBOL` and magic number `123456`.
+  and 120-second ATR/EMA20 early-exit rules are managed from Python for the
+  supported symbols and magic number `123456`.
 - Real deal history is queried directly from the terminal. The engine does not
   invent historical RSI, trend, exit prices, or trade outcomes.
 - Live order placement and position management remain gated by the explicit
@@ -305,6 +318,13 @@ launches the dashboard at [http://localhost:8081](http://localhost:8081) with
 automated strategy entries still disabled. The live launcher does not place an
 order by itself.
 
+For automated strategy orders, double-click `start_automated_trading.bat` and
+type `AUTO LIVE` at its confirmation prompt. The engine submits only after the
+decision score reaches its BUY/SELL threshold on a newly completed 5-minute
+candle, and only if account risk, margin, symbol rules, and MT5 permissions
+allow the order. The first completed candle after startup arms the engine; it
+does not submit an entry from stale startup data.
+
 The MT5 Python integration still requires the installed terminal process.
 `mt5.initialize()` may open it when the engine starts; minimize the terminal
 window if you do not want it in the foreground. Data-only mode prevents order
@@ -322,7 +342,7 @@ Only proceed after verifying the logged-in terminal and broker symbol settings:
 
 ```powershell
 $env:MT5_TERMINAL_PATH = 'C:\Program Files\MetaTrader 5\terminal64.exe'
-$env:MT5_SYMBOL = 'Volatility 25 Index'
+$env:MT5_SYMBOL = 'Volatility 25 Index' # Optional default dashboard symbol
 $env:MAX_RISK_PER_TRADE_PERCENT = '1'
 $env:MAX_DAILY_LOSS_PERCENT = '2'
 .\.venv\Scripts\python.exe .\Enhanced_Derive_AI_Engine.py --enable-live-trading
@@ -330,18 +350,29 @@ $env:MAX_DAILY_LOSS_PERCENT = '2'
 
 Live mode is opt-in for each process launch. It enables manually confirmed
 dashboard orders; automated strategy entries remain disabled unless
-`--enable-auto-trading` is also supplied. Both risk settings accept numbers
+`--enable-auto-trading` is also supplied. To enable them from PowerShell, add
+`--enable-auto-trading` to the launch command. Both risk settings accept numbers
 greater than 0 and up to 100; values are percentages. Defaults are 1.0% per
 trade and 2.0% daily loss. Invalid settings prevent the module from starting.
 The daily-loss calculation is `max(0, -daily_pnl / daily_start_balance * 100)`;
 new orders are blocked when that value reaches the configured cap. Missing
 terminal/account data blocks orders.
 
-Each manual order requires a user-entered lot volume (default prompt: 0.50 lots)
-and a browser confirmation. The application calculates risk from the terminal's
-symbol contract and rejects any order whose stop-loss risk exceeds the
-configured percentage. This does not guarantee execution or remove market,
-liquidity, slippage, or gap risk.
+Each manual order requires a user-entered lot volume validated against the
+selected symbol's broker minimum, maximum, and step, plus a browser
+confirmation. Stop-loss and take-profit distances come from the
+selected timeframe's ATR and are anchored to the fresh MT5 bid/ask when the
+request is processed, not the dashboard's market-feed price. The application
+calculates risk from the terminal's symbol contract and rejects any order whose
+stop-loss risk exceeds the configured percentage. This does not guarantee
+execution or remove market, liquidity, slippage, or gap risk.
+
+Automated entries use the largest broker-valid volume whose calculated
+stop-loss risk and required margin fit the configured limits. Each symbol's
+completed 5-minute ATR sets its stop/target distances to 1.5x/3x ATR. Entries
+are evaluated once after each newly completed 5-minute candle. If even the
+broker's minimum lot would exceed the risk cap or available margin, the order
+is rejected.
 
 ### Tests and basic checks
 
@@ -349,12 +380,45 @@ Run the unit tests and syntax check:
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
-.\.venv\Scripts\python.exe -m compileall -q .\Enhanced_Derive_AI_Engine.py .\tests
+.\.venv\Scripts\python.exe -m compileall -q .\Enhanced_Derive_AI_Engine.py .\mt5_bridge.py .\backtest.py .\tests
 ```
 
 The current tests cover default-mode trade suppression, local POST origins,
 missing daily-risk data, the daily-loss threshold, and the per-trade risk cap.
 They do not simulate Deriv, MT5, browser rendering, or broker execution.
+
+### Historical MT5 backtest
+
+The backtest replays the current automated strategy across the four supported
+indices using MT5 3m, 5m, 15m, 1h, and 1d candles. It uses a $1,000 starting
+balance, a 1% risk cap per trade, one open portfolio position, and the
+configured daily-loss limit. Signals use completed bars only and entries use
+the next 5m bar open. When a candle touches both stop and target, the stop is
+assumed first. Historical spread points are applied to ask-side prices; MT5
+current contract calculations estimate P/L and margin. Historical commission
+and slippage are not included. ATR trailing/break-even and early structural
+exits are checked only at 5m closes, with changed stops effective from the
+next bar. The report documents these approximations.
+
+The backtest uses the available history even when it does not cover the full
+requested period. It reports both the requested and actual test dates, starts
+at the latest available common history date plus a 30-day indicator warm-up,
+and ends at the latest common completed 5-minute candle. It excludes incomplete
+and out-of-range bars and refuses to run if no usable period remains. To extend
+history, increase **MT5 > Tools > Options > Charts > Max bars in chart** and
+open each symbol/timeframe chart and press **Home** repeatedly to request older
+bars from the broker. The $1,000 starting balance is denominated in the
+connected account's currency; the daily-loss reset is evaluated at UTC
+midnight and may differ from the broker's trading-day boundary. Run:
+
+```powershell
+.\.venv\Scripts\python.exe .\backtest.py --years 2 --balance 1000 --risk-percent 1 --output .\backtest_results
+```
+
+The command is read-only with respect to trading: it does not place or modify
+orders. It writes a JSON summary and a CSV trade list. To test fewer symbols,
+pass `--symbols "Volatility 25 Index"` (or another supported symbol) before
+`--output`.
 
 To confirm local listeners while the app runs:
 
@@ -371,7 +435,7 @@ and confirm live quotes/candles in the dashboard.
 | Setting/file | Purpose |
 |---|---|
 | `MT5_TERMINAL_PATH` | Optional path to `terminal64.exe`; uses package auto-discovery if unset. |
-| `MT5_SYMBOL` | Exact MT5 broker symbol; defaults to `Volatility 25 Index`. |
+| `MT5_SYMBOL` | Default dashboard symbol from the supported list; defaults to `Volatility 25 Index`. |
 | `MAX_RISK_PER_TRADE_PERCENT` | Maximum calculated stop-loss risk as a percentage of balance; default `1`. |
 | `MAX_DAILY_LOSS_PERCENT` | Daily realized-plus-floating loss threshold expressed as a percentage; default `2`. |
 | `credentials.json`, `token.pickle` | Local credential/token files; ignored by Git and not required for the current public market-data connection. |
@@ -390,11 +454,11 @@ default data-only mode and add tests with each trading-related change.
 ### Phase 1 — Paper trading and backtesting
 
 - Add an explicit paper mode that cannot write to MT5.
-- Define a historical candle provider interface: Deriv API first, MT5 history
-  later, with a normalized OHLC/timezone/schema contract.
-- Implement deterministic replay, transaction-cost assumptions, order
-  lifecycle simulation, and performance metrics.
-- Prevent look-ahead bias; test the same strategy on replay and live ticks.
+- Improve the historical candle provider abstraction and broker-timezone
+  handling.
+- Add tick-level replay and independently validate the candle replay against
+  known periods and MT5 tester results.
+- Test strategy parity between replay and live ticks.
 - Label simulated results and fallback candles so they cannot be confused with
   executed or live data.
 
@@ -453,7 +517,8 @@ default data-only mode and add tests with each trading-related change.
 
 | Path | Responsibility |
 |---|---|
-| `Enhanced_Derive_AI_Engine.py` | Deriv feed, indicator/strategy calculations, HTTP/WebSocket servers, risk checks, and MT5 file handoff. |
+| `Enhanced_Derive_AI_Engine.py` | Deriv feed, indicator/strategy calculations, HTTP/WebSocket servers, risk checks, and MT5 integration. |
+| `backtest.py` | Read-only MT5 historical-candle replay and JSON/CSV result generation. |
 | `index.html` | Live trading dashboard and manual controls. |
 | `tracker.html` | Day-level tracker and summary charts. |
 | `tradelog.html` | Trade-log/performance page. |

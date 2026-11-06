@@ -7,6 +7,7 @@ from http.server import ThreadingHTTPServer
 from unittest.mock import Mock, patch
 
 import Enhanced_Derive_AI_Engine as engine
+import pandas as pd
 
 
 class StartupSafetyTests(unittest.TestCase):
@@ -76,6 +77,7 @@ class StartupSafetyTests(unittest.TestCase):
             "timeframes": {
                 "3m": {"trend": "BULLISH"},
                 "5m": {
+                    "data_ready": True,
                     "trend": "BULLISH",
                     "atr": 1.0,
                     "adx": 20.0,
@@ -92,7 +94,7 @@ class StartupSafetyTests(unittest.TestCase):
                     }],
                 },
                 "15m": {"trend": "BULLISH"},
-                "h1": {"trend": "BULLISH"},
+                "h1": {"data_ready": True, "trend": "BULLISH"},
             },
         }
 
@@ -105,6 +107,138 @@ class StartupSafetyTests(unittest.TestCase):
             engine.check_and_auto_trigger_trade(state)
 
         self.assertEqual(state["decision_audit"]["consensus_score"], 65)
+        place_order.assert_not_called()
+
+    def test_auto_live_mode_dispatches_threshold_signal_with_quote_relative_stops(self):
+        state = {
+            "current_price": 100.0,
+            "cpr": {},
+            "mt5_account": {
+                "open_positions": 0,
+                "positions": [],
+                "daily_start_balance": 1000.0,
+                "daily_pnl": 0.0,
+                "balance": 1000.0,
+                "symbols": {"Volatility 10 Index": {"available": True}},
+            },
+            "timeframes": {
+                "3m": {"trend": "BULLISH"},
+                "5m": {
+                    "data_ready": True,
+                    "trend": "BULLISH",
+                    "atr": 1.0,
+                    "adx": 20.0,
+                    "rsi": 10.0,
+                    "stoch_k_history": [10.0],
+                    "ema20": 99.0,
+                    "bb_upper": [110.0],
+                    "bb_lower": [90.0],
+                    "candles": [{
+                        "time": 300,
+                        "open": 100.0,
+                        "high": 100.5,
+                        "low": 99.5,
+                        "close": 100.0,
+                    }, {
+                        "time": 600,
+                        "open": 100.0,
+                        "high": 101.0,
+                        "low": 99.0,
+                        "close": 100.0,
+                    }],
+                    "bb_upper": [110.0, 110.0],
+                    "bb_middle": [100.0, 100.0],
+                    "bb_lower": [90.0, 90.0],
+                    "ema20_history": [99.0, 110.0],
+                    "ema30_history": [101.0, 90.0],
+                    "ema100_history": [100.0, 100.0],
+                    "atr_history": [1.0, 2.0],
+                    "adx_history": [20.0, 30.0],
+                    "rsi_history": [10.0, 90.0],
+                    "stoch_k_history": [10.0, 90.0],
+                    "stoch_d_history": [10.0, 90.0],
+                },
+                "15m": {"trend": "BULLISH"},
+                "h1": {"data_ready": True, "trend": "BULLISH"},
+            },
+        }
+        place_order = Mock(return_value=(True, "Done", {"order": 1, "volume": 0.2}))
+        account_snapshot = Mock(return_value=(
+            state["mt5_account"],
+            {"trade_allowed": True},
+        ))
+
+        with (
+            patch.object(engine, "LIVE_TRADING_ENABLED", True),
+            patch.object(engine, "AUTO_TRADING_ENABLED", True),
+            patch.object(engine, "agent_status", "RUNNING"),
+            patch.object(engine, "last_auto_evaluated_candle_times", {"Volatility 10 Index": "0"}),
+            patch.object(engine, "latest_mt5_status", {"trade_allowed": True}),
+            patch.object(engine.mt5_bridge, "account_snapshot", account_snapshot),
+            patch.object(engine.mt5_bridge, "place_market_order", place_order),
+        ):
+            engine.check_and_auto_trigger_trade(state, "Volatility 10 Index")
+            closed_score = state["decision_audit"]["consensus_score"]
+            engine.check_and_auto_trigger_trade(state, "Volatility 10 Index")
+
+        self.assertEqual(closed_score, 65)
+        payload = place_order.call_args.args[0]
+        self.assertEqual(payload["action"], "BUY")
+        self.assertEqual(payload["symbol"], "Volatility 10 Index")
+        self.assertEqual(payload["sl_distance"], 1.5)
+        self.assertEqual(payload["tp_distance"], 3.0)
+        self.assertTrue(payload["risk_sized"])
+        self.assertNotIn("sl", payload)
+        self.assertNotIn("tp", payload)
+        place_order.assert_called_once()
+
+    def test_auto_trading_waits_for_next_closed_candle_after_startup(self):
+        state = {
+            "current_price": 100.0,
+            "cpr": {},
+            "mt5_account": {
+                "open_positions": 0,
+                "positions": [],
+                "daily_start_balance": 1000.0,
+                "daily_pnl": 0.0,
+            },
+            "timeframes": {
+                "5m": {
+                    "data_ready": True,
+                    "trend": "BULLISH",
+                    "atr": 1.0,
+                    "adx": 20.0,
+                    "rsi": 50.0,
+                    "stoch_k_history": [50.0, 50.0],
+                    "candles": [
+                        {"time": 300, "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0},
+                        {"time": 600, "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0},
+                    ],
+                    "bb_upper": [110.0, 110.0],
+                    "bb_middle": [100.0, 100.0],
+                    "bb_lower": [90.0, 90.0],
+                    "ema20_history": [100.0, 100.0],
+                    "ema30_history": [100.0, 100.0],
+                    "ema100_history": [100.0, 100.0],
+                    "atr_history": [1.0, 1.0],
+                    "adx_history": [20.0, 20.0],
+                    "rsi_history": [50.0, 50.0],
+                    "stoch_d_history": [50.0, 50.0],
+                },
+                "h1": {"data_ready": True, "trend": "FLAT"},
+            },
+        }
+        with (
+            patch.object(engine, "LIVE_TRADING_ENABLED", True),
+            patch.object(engine, "AUTO_TRADING_ENABLED", True),
+            patch.object(engine, "agent_status", "RUNNING"),
+            patch.object(engine, "last_auto_evaluated_candle_times", {}),
+            patch.object(engine, "latest_mt5_status", {"trade_allowed": True}),
+            patch.object(engine.mt5_bridge, "place_market_order") as place_order,
+        ):
+            engine.check_and_auto_trigger_trade(state)
+
+        self.assertIn("waiting for the next completed 5m candle", state["decision_audit"]["reasoning"])
         place_order.assert_not_called()
 
     def test_manual_order_endpoint_dispatches_only_in_live_mode(self):
@@ -169,6 +303,74 @@ class StartupSafetyTests(unittest.TestCase):
 
         self.assertEqual(state["decision_audit"]["regime"], "SCANNING")
         self.assertIn("Waiting for complete 5m and 1h", state["decision_audit"]["reasoning"])
+
+    def test_non_default_symbol_tick_updates_its_own_candle_cache(self):
+        symbol = "Volatility 10 Index"
+        cache = engine.create_timeframe_cache()
+        cache["5m"] = pd.DataFrame(
+            [{"time": 300, "open": 200.0, "high": 201.0, "low": 199.0, "close": 200.0}],
+            index=pd.DatetimeIndex([pd.Timestamp(300, unit="s", tz="UTC")]),
+        )
+        prices = {
+            "Volatility 10 Index": 200.0,
+            "Volatility 25 Index": 100.0,
+            "Volatility 50 Index": 500.0,
+            "Volatility 100 Index": 1000.0,
+        }
+
+        with (
+            patch.object(engine, "symbol_tf_caches", {symbol: cache}),
+            patch.object(engine, "current_prices", prices),
+            patch.object(engine, "current_price", 100.0),
+            patch.object(engine, "broadcast_state_update") as broadcast,
+        ):
+            engine.on_message(
+                None,
+                json.dumps({
+                    "msg_type": "tick",
+                    "tick": {"symbol": "R_10", "quote": 210.0, "epoch": 600},
+                }),
+            )
+
+        self.assertEqual(cache["5m"].iloc[-1]["open"], 210.0)
+        self.assertEqual(cache["5m"].iloc[-1]["close"], 210.0)
+        self.assertEqual(prices["Volatility 25 Index"], 100.0)
+        broadcast.assert_called_once()
+
+    def test_short_history_does_not_invent_atr_for_trade_levels(self):
+        index = pd.date_range("2026-01-01", periods=5, freq="5min", tz="UTC")
+        candles = pd.DataFrame(
+            [
+                {"time": int(timestamp.timestamp()), "open": 100 + i, "high": 102 + i, "low": 99 + i, "close": 101 + i}
+                for i, timestamp in enumerate(index)
+            ],
+            index=index,
+        )
+
+        timeframe = engine.process_dataframe(candles, "Volatility 10 Index")
+
+        self.assertFalse(timeframe["data_ready"])
+        self.assertEqual(timeframe["atr"], 0.0)
+
+    def test_initial_dashboard_state_exposes_all_supported_symbols(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), engine.CustomHTTPRequestHandler)
+        port = server.server_address[1]
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        try:
+            with patch.object(engine, "latest_state_payload", None):
+                connection = http.client.HTTPConnection("127.0.0.1", port)
+                connection.request("GET", "/agent_state.json", headers={"Host": f"localhost:{engine.DASHBOARD_PORT}"})
+                response = connection.getresponse()
+                state = json.loads(response.read())
+                connection.close()
+
+            self.assertEqual(set(state["symbols"]), set(engine.DERIV_SYMBOLS))
+            self.assertEqual(state["default_symbol"], engine.DEFAULT_SYMBOL)
+        finally:
+            server.shutdown()
+            server.server_close()
+            server_thread.join(timeout=5)
 
     def test_only_local_dashboard_origins_are_allowed_for_posts(self):
         handler = object.__new__(engine.CustomHTTPRequestHandler)

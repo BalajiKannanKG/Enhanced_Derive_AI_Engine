@@ -8,6 +8,11 @@ import threading
 from datetime import datetime, time as datetime_time, timedelta
 from typing import Any
 
+# The Python package exposes ORDER_FILLING_* constants but not the corresponding
+# SYMBOL_FILLING_* bit flags stored in SymbolInfo.filling_mode.
+_SYMBOL_FILLING_FOK = 1
+_SYMBOL_FILLING_IOC = 2
+
 try:
     import MetaTrader5 as mt5
 except ImportError:
@@ -15,9 +20,15 @@ except ImportError:
 
 
 class MT5Bridge:
-    def __init__(self, terminal_path: str | None = None, symbol: str | None = None) -> None:
+    def __init__(
+        self,
+        terminal_path: str | None = None,
+        symbol: str | None = None,
+        symbols: list[str] | None = None,
+    ) -> None:
         self.terminal_path = terminal_path or os.environ.get("MT5_TERMINAL_PATH")
         self.symbol = symbol or os.environ.get("MT5_SYMBOL", "Volatility 25 Index")
+        self.symbols = tuple(dict.fromkeys([self.symbol, *(symbols or [])]))
         self._lock = threading.RLock()
         self._initialized = False
         self._status = "NOT CONNECTED"
@@ -129,6 +140,32 @@ class MT5Bridge:
                 self._detail = self._error_text()
                 return None, self.status()
 
+            symbols_data: dict[str, dict[str, Any]] = {}
+            for symbol in self.symbols:
+                selected = mt5.symbol_select(symbol, True)
+                info = mt5.symbol_info(symbol) if selected else None
+                tick = mt5.symbol_info_tick(symbol) if selected else None
+                symbols_data[symbol] = {
+                    "available": bool(info is not None and tick is not None),
+                    "detail": (
+                        "Quote and symbol settings available."
+                        if info is not None and tick is not None
+                        else f"MT5 quote or symbol settings unavailable: {self._error_text()}"
+                    ),
+                    "quote": (
+                        {
+                            "bid": float(tick.bid),
+                            "ask": float(tick.ask),
+                            "time": int(tick.time),
+                        }
+                        if tick is not None
+                        else None
+                    ),
+                    "volume_min": float(info.volume_min) if info is not None else None,
+                    "volume_max": float(info.volume_max) if info is not None else None,
+                    "volume_step": float(info.volume_step) if info is not None else None,
+                    "digits": int(info.digits) if info is not None else None,
+                }
             now = datetime.now().astimezone()
             day_start = datetime.combine(now.date(), datetime_time.min, tzinfo=now.tzinfo)
             deals = mt5.history_deals_get(day_start, now)
@@ -162,6 +199,8 @@ class MT5Bridge:
                 "daily_pnl": realized_today + floating_pnl,
                 "currency": str(account.currency),
                 "account_server": str(account.server),
+                "symbols": symbols_data,
+                "quote": symbols_data[self.symbol]["quote"],
             }
             self._status = "CONNECTED" if trade_allowed else "CONNECTED - TRADING DISABLED"
             self._detail = (
@@ -199,11 +238,84 @@ class MT5Bridge:
     @staticmethod
     def _filling_mode(info: Any) -> int:
         supported = int(info.filling_mode)
-        if supported & mt5.SYMBOL_FILLING_FOK:
+        if supported & _SYMBOL_FILLING_FOK:
             return mt5.ORDER_FILLING_FOK
-        if supported & mt5.SYMBOL_FILLING_IOC:
+        if supported & _SYMBOL_FILLING_IOC:
             return mt5.ORDER_FILLING_IOC
         return mt5.ORDER_FILLING_RETURN
+
+    @staticmethod
+    def _risk_sized_volume(
+        order_type: int,
+        symbol: str,
+        price: float,
+        stop_loss: float,
+        info: Any,
+        account: Any,
+        max_risk_percent: float,
+    ) -> tuple[float | None, float | None, str | None]:
+        volume_min = float(info.volume_min)
+        volume_max = float(info.volume_max)
+        volume_step = float(info.volume_step)
+        if (
+            not all(math.isfinite(value) for value in (volume_min, volume_max, volume_step))
+            or volume_min <= 0
+            or volume_max < volume_min
+            or volume_step <= 0
+        ):
+            return None, None, "MT5 symbol volume limits are invalid."
+
+        risk_cap = float(account.balance) * max_risk_percent / 100.0
+        free_margin = float(account.margin_free)
+        last_step = math.floor((volume_max - volume_min) / volume_step + 1e-9)
+
+        def candidate(
+            index: int,
+        ) -> tuple[float, float | None, float | None, str | None]:
+            volume = round(volume_min + index * volume_step, 8)
+            risk = mt5.order_calc_profit(order_type, symbol, volume, price, stop_loss)
+            if risk is None or not math.isfinite(float(risk)):
+                return volume, None, None, f"Could not calculate order risk: {mt5.last_error()}"
+            margin = mt5.order_calc_margin(order_type, symbol, volume, price)
+            if margin is None or not math.isfinite(float(margin)):
+                return volume, None, None, f"Could not calculate required margin: {mt5.last_error()}"
+            return volume, abs(float(risk)), float(margin), None
+
+        min_volume, min_risk, min_margin, error = candidate(0)
+        if error:
+            return None, None, error
+        if min_risk is None or min_margin is None:
+            return None, None, "Could not calculate risk and margin for the minimum broker volume."
+        if min_risk > risk_cap:
+            return None, None, (
+                f"Minimum broker volume {min_volume:g} risks {min_risk:.2f} "
+                f"{account.currency}, exceeding the {max_risk_percent:.2f}% "
+                f"account limit ({risk_cap:.2f})."
+            )
+        if min_margin > free_margin:
+            return None, None, "Insufficient free margin for the minimum broker volume."
+
+        low = 0
+        high = last_step
+        while low < high:
+            middle = (low + high + 1) // 2
+            volume, risk, margin, error = candidate(middle)
+            if error:
+                return None, None, error
+            if (
+                risk is not None
+                and margin is not None
+                and risk <= risk_cap
+                and margin <= free_margin
+            ):
+                low = middle
+            else:
+                high = middle - 1
+
+        volume, risk, _, error = candidate(low)
+        if error:
+            return None, None, error
+        return volume, risk, None
 
     def place_market_order(
         self,
@@ -222,8 +334,8 @@ class MT5Bridge:
                 return False, "An MT5 position is already open.", {}
 
             symbol = str(payload.get("symbol") or self.symbol)
-            if symbol != self.symbol:
-                return False, f"Only the configured MT5 symbol {self.symbol} is allowed.", {}
+            if symbol not in self.symbols:
+                return False, f"MT5 symbol {symbol} is not in the configured supported-symbol list.", {}
             if not mt5.symbol_select(symbol, True):
                 return False, f"Unable to select MT5 symbol {symbol}: {self._error_text()}", {}
 
@@ -236,17 +348,39 @@ class MT5Bridge:
             if action not in ("BUY", "SELL"):
                 return False, "Order action must be BUY or SELL.", {}
             order_type = mt5.ORDER_TYPE_BUY if action == "BUY" else mt5.ORDER_TYPE_SELL
+            uses_distance = "sl_distance" in payload or "tp_distance" in payload
+            risk_sized = payload.get("risk_sized") is True
             try:
                 price = float(tick.ask if action == "BUY" else tick.bid)
-                volume = float(payload.get("volume", 0.0))
-                stop_loss = float(payload.get("sl", 0.0))
-                take_profit = float(payload.get("tp", 0.0))
+                volume = float(
+                    info.volume_min if risk_sized else payload.get("volume", 0.0)
+                )
+                if uses_distance:
+                    stop_distance = float(payload.get("sl_distance", 0.0))
+                    target_distance = float(payload.get("tp_distance", 0.0))
+                else:
+                    stop_loss = float(payload.get("sl", 0.0))
+                    take_profit = float(payload.get("tp", 0.0))
             except (TypeError, ValueError):
-                return False, "Volume, stop-loss, and take-profit must be numbers.", {}
-            if not all(math.isfinite(value) for value in (price, volume, stop_loss, take_profit)):
-                return False, "Price, volume, stop-loss, and take-profit must be finite numbers.", {}
+                return False, "Volume, stop-loss, and take-profit values must be numbers.", {}
+            values = [price, volume]
+            if uses_distance:
+                values.extend((stop_distance, target_distance))
+                if stop_distance <= 0 or target_distance <= 0:
+                    return False, "Stop-loss and take-profit distances must be greater than zero.", {}
+            else:
+                values.extend((stop_loss, take_profit))
+            if not all(math.isfinite(value) for value in values):
+                return False, "Price, volume, and stop-loss/take-profit values must be finite numbers.", {}
             digits = int(info.digits)
             price = round(price, digits)
+            if uses_distance:
+                if action == "BUY":
+                    stop_loss = price - stop_distance
+                    take_profit = price + target_distance
+                else:
+                    stop_loss = price + stop_distance
+                    take_profit = price - target_distance
             stop_loss = round(stop_loss, digits)
             take_profit = round(take_profit, digits)
             if volume < info.volume_min or volume > info.volume_max:
@@ -266,16 +400,32 @@ class MT5Bridge:
             ):
                 return False, "Stop-loss or take-profit is inside the broker's minimum stop distance.", {}
 
-            risk = mt5.order_calc_profit(order_type, symbol, volume, price, stop_loss)
-            if risk is None or not math.isfinite(float(risk)):
-                return False, f"Could not calculate order risk: {self._error_text()}", {}
-            risk_amount = abs(float(risk))
             risk_cap = float(account.balance) * max_risk_percent / 100.0
-            if risk_amount > risk_cap:
-                return False, (
-                    f"Estimated stop-loss risk {risk_amount:.2f} {account.currency} exceeds "
-                    f"the {max_risk_percent:.2f}% account limit ({risk_cap:.2f})."
-                ), {}
+            if risk_sized:
+                sized_volume, risk_amount, sizing_error = self._risk_sized_volume(
+                    order_type,
+                    symbol,
+                    price,
+                    stop_loss,
+                    info,
+                    account,
+                    max_risk_percent,
+                )
+                if sizing_error:
+                    return False, sizing_error, {}
+                if sized_volume is None or risk_amount is None:
+                    return False, "Could not determine a volume within the configured risk limit.", {}
+                volume = sized_volume
+            else:
+                risk = mt5.order_calc_profit(order_type, symbol, volume, price, stop_loss)
+                if risk is None or not math.isfinite(float(risk)):
+                    return False, f"Could not calculate order risk: {self._error_text()}", {}
+                risk_amount = abs(float(risk))
+                if risk_amount > risk_cap:
+                    return False, (
+                        f"Estimated stop-loss risk {risk_amount:.2f} {account.currency} exceeds "
+                        f"the {max_risk_percent:.2f}% account limit ({risk_cap:.2f})."
+                    ), {}
 
             margin = mt5.order_calc_margin(order_type, symbol, volume, price)
             if margin is None or float(margin) > float(account.margin_free):
@@ -308,6 +458,10 @@ class MT5Bridge:
             if succeeded:
                 result["risk_amount"] = risk_amount
                 result["risk_cap"] = risk_cap
+                result["quote_price"] = price
+                result["sl"] = stop_loss
+                result["tp"] = take_profit
+                result["volume"] = volume
             return succeeded, message, result
 
     def modify_position(
@@ -356,7 +510,6 @@ class MT5Bridge:
                 "price": float(tick.bid if is_buy else tick.ask),
                 "deviation": 50,
                 "magic": int(position.magic),
-                "comment": "Enhanced Derive AI Engine exit",
                 "type_time": mt5.ORDER_TIME_GTC,
                 "type_filling": self._filling_mode(info),
             }
@@ -376,7 +529,7 @@ class MT5Bridge:
 
             history = []
             for deal in deals:
-                if deal.symbol != self.symbol or deal.type not in (
+                if deal.symbol not in self.symbols or deal.type not in (
                     mt5.DEAL_TYPE_BUY,
                     mt5.DEAL_TYPE_SELL,
                 ):

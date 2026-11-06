@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Actionable Trading Agent - VIX 25</title>
+    <title>Actionable Multi-Symbol Trading Agent</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
@@ -42,6 +42,7 @@
         h1 { margin: 0; font-size: clamp(0.9rem, 1.25vw, 1.15rem); color: var(--accent-cyan); display: flex; align-items: center; gap: 8px; min-width: 0; }
         .badge { background: var(--card-bg); border: 1px solid var(--border-color); padding: 1px 4px; border-radius: 4px; font-size: 0.58rem; color: var(--text-main); }
         .live-price-tag { background: rgba(6, 182, 212, 0.15); border: 1px solid var(--accent-cyan); color: var(--accent-cyan); padding: 1px 5px; border-radius: 4px; font-weight: bold; font-size: 0.65rem; }
+        .symbol-select { max-width: 190px; background: var(--card-bg); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 4px; padding: 4px 6px; font-size: 0.68rem; }
         .countdown-badge-lg { background: rgba(245, 158, 11, 0.2); border: 1px solid var(--accent-yellow); color: var(--accent-yellow); padding: 1px 6px; border-radius: 4px; font-weight: bold; font-size: 0.7rem; letter-spacing: 0.5px; }
 
         /* Timeframe Hyperlink Tabs */
@@ -239,8 +240,12 @@
 <body data-theme="light">
 
     <header>
-        <h1>🎯 AI Executive Trading Room <span id="livePriceDisplay" class="live-price-tag">R_25: ---</span></h1>
+        <h1>🎯 AI Executive Trading Room <span id="livePriceDisplay" class="live-price-tag">Symbol: ---</span></h1>
         <div style="display: flex; align-items: center; gap: 6px;">
+            <label for="symbol-selector" class="badge">Symbol</label>
+            <select id="symbol-selector" class="symbol-select" onchange="selectTradingSymbol(this.value)">
+                <option>Loading symbols...</option>
+            </select>
             <button class="theme-btn" onclick="toggleTheme()" id="themeToggleBtn">☀️ Light</button>
             <div class="badge" id="last-update">Syncing...</div>
         </div>
@@ -346,10 +351,10 @@
 
         <!-- Right Column: Forecast, decision audit, and confluence matrix -->
         <div class="right-column">
-            <!-- VIX 25 SMART CAPITAL & LOT SIZE CALCULATOR (MAX 1000 LOTS) -->
+            <!-- Selected-symbol capital and broker-volume information -->
             <div class="card" style="flex: 1.3; min-height: 0;" hidden>
                 <h3>
-                    <span>🧮 VIX 25 Capital & Safe Lot Calculator</span>
+                    <span>🧮 Selected Symbol Capital & Volume Information</span>
                     <span id="plan-date-tag" class="badge" style="color:var(--accent-red);">NOT CONNECTED</span>
                 </h3>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
@@ -360,11 +365,11 @@
                 <div class="calc-grid">
                     <div class="calc-card">
                         <div style="color:var(--text-muted); font-size:0.5rem;">Margin Needed</div>
-                        <div id="calcMarginRisk" style="font-weight:bold; color:var(--accent-yellow);">$0.35</div>
+                        <div id="calcMarginRisk" style="font-weight:bold; color:var(--accent-yellow);">---</div>
                     </div>
                     <div class="calc-card">
                         <div style="color:var(--text-muted); font-size:0.5rem;">Smart Lot Size</div>
-                        <div id="calcSafeLot" style="font-weight:bold; color:var(--accent-cyan);">0.50 Lots</div>
+                        <div id="calcSafeLot" style="font-weight:bold; color:var(--accent-cyan);">---</div>
                     </div>
                     <div class="calc-card">
                         <div style="color:var(--text-muted); font-size:0.5rem;">Est. Target Profit (3x ATR)</div>
@@ -450,6 +455,8 @@
 
     <script>
         let globalData = null;
+        let dashboardState = null;
+        let selectedSymbol = localStorage.getItem('selectedTradingSymbol');
         let priceChartInstance = null;
         let rsiChartInstance = null;
         let stochChartInstance = null;
@@ -471,55 +478,77 @@
             'd1': 86400
         };
 
-        function calculatePositionAndMargin() {
-            const inputCapital = parseFloat(document.getElementById('calcCapitalInput').value) || 100.0;
-            
-            const liveMinLot = (globalData && globalData.vix25_specs && globalData.vix25_specs.min_lot) ? globalData.vix25_specs.min_lot : 0.50;
-            const liveMarginPerMin = (globalData && globalData.vix25_specs && globalData.vix25_specs.margin_per_min_lot) ? globalData.vix25_specs.margin_per_min_lot : 0.35;
-            const maxAllowedLots = 200.00; // Single trade cap
-            const lotStep = 0.50;
+        function selectTradingSymbol(symbol) {
+            if (!dashboardState || !dashboardState.symbols || !dashboardState.symbols[symbol]) return;
+            selectedSymbol = symbol;
+            localStorage.setItem('selectedTradingSymbol', symbol);
+            renderDashboardState(dashboardState);
+        }
 
-            let calculatedLots = liveMinLot * (inputCapital / 100.0);
-            calculatedLots = Math.max(liveMinLot, Math.min(maxAllowedLots, calculatedLots));
-
-            let safeLot = Math.round(calculatedLots / lotStep) * lotStep;
-            safeLot = Math.max(liveMinLot, Math.min(maxAllowedLots, safeLot));
-
-            let requiredMargin = (safeLot / liveMinLot) * liveMarginPerMin;
-
-            const marginEl = document.getElementById('calcMarginRisk');
-            marginEl.innerText = `$${requiredMargin.getvalue ? requiredMargin.toFixed(2) : requiredMargin.toFixed(2)} (Min: ${liveMinLot})`;
-            
-            if (inputCapital < requiredMargin) {
-                marginEl.style.color = 'var(--accent-red)';
-                marginEl.innerText += " (LOW BALANCE)";
-            } else {
-                marginEl.style.color = 'var(--accent-yellow)';
+        function setSelectedDashboardData(data) {
+            dashboardState = data;
+            const availableSymbols = Object.keys(data.symbols || {});
+            const selector = document.getElementById('symbol-selector');
+            if (availableSymbols.length && !availableSymbols.includes(selectedSymbol)) {
+                selectedSymbol = data.default_symbol || availableSymbols[0];
+            }
+            if (selector && availableSymbols.length) {
+                selector.innerHTML = '';
+                availableSymbols.forEach(symbol => {
+                    const option = document.createElement('option');
+                    option.value = symbol;
+                    option.textContent = symbol;
+                    selector.appendChild(option);
+                });
+                selector.value = selectedSymbol;
             }
 
-            document.getElementById('calcSafeLot').innerText = `${safeLot.toFixed(2)} Lots`;
+            const selectedData = (data.symbols && data.symbols[selectedSymbol]) || data;
+            const symbolMarket = selectedData.mt5_symbol || {};
+            const account = data.mt5_account || {};
+            globalData = {
+                ...data,
+                ...selectedData,
+                symbol: selectedSymbol,
+                mt5_account: {
+                    ...account,
+                    quote: symbolMarket.quote || (selectedData.mt5_symbol ? null : account.quote || null),
+                    symbol_market: symbolMarket
+                },
+                mt5_symbol: symbolMarket
+            };
+        }
+
+        function calculatePositionAndMargin() {
+            const symbolMarket = globalData?.mt5_symbol || {};
+            const liveMinLot = Number(symbolMarket.volume_min);
+            const volumeStep = Number(symbolMarket.volume_step);
+            const maxAllowedLots = Number(symbolMarket.volume_max);
+
+            const marginEl = document.getElementById('calcMarginRisk');
+            marginEl.innerText = `Broker-calculated at order time (Min: ${Number.isFinite(liveMinLot) ? liveMinLot : '--'})`;
+            marginEl.style.color = 'var(--accent-yellow)';
+
+            document.getElementById('calcSafeLot').innerText =
+                Number.isFinite(liveMinLot) && Number.isFinite(volumeStep) && Number.isFinite(maxAllowedLots)
+                    ? `${liveMinLot}–${maxAllowedLots} lots, step ${volumeStep}`
+                    : '--';
 
             // Get current ATR for professional 1:2 R:R calculation
-            const atr = (globalData && globalData.timeframes && globalData.timeframes[selectedTimeframe]) ? globalData.timeframes[selectedTimeframe].atr : 1.0;
+            const atr = Number(globalData?.timeframes?.[selectedTimeframe]?.atr);
             
-            const tpPts = atr * 3.0;
-            const slPts = atr * 1.5;
+            document.getElementById('calcTargetProfit').innerText = 'MT5 contract dependent';
+            document.getElementById('calcMaxLoss').innerText = 'Validated by MT5';
+            document.getElementById('calcFinalProfit').innerText = '--';
+            document.getElementById('calcFinalLoss').innerText = '--';
 
-            // Approximate dollar value calculation per point for R_25 (adjust contract multiplier if needed based on broker specs)
-            const dollarPerPoint = safeLot * 14.0; // Baseline R_25 point value multiplier per lot
-            const dollarGain = tpPts * dollarPerPoint;
-            const dollarLoss = slPts * dollarPerPoint;
-
-            document.getElementById('calcTargetProfit').innerText = `+$${dollarGain.toFixed(2)}`;
-            document.getElementById('calcMaxLoss').innerText = `-$${dollarLoss.toFixed(2)}`;
-            document.getElementById('calcFinalProfit').innerText = `$${(inputCapital + dollarGain).toFixed(2)}`;
-            document.getElementById('calcFinalLoss').innerText = `$${(inputCapital - dollarLoss).toFixed(2)}`;
-
-            if (currentLivePrice > 0) {
-                const tpPrice = currentLivePrice + tpPts;
-                const slPrice = currentLivePrice - slPts;
-                document.getElementById('calcTpPrice').innerText = tpPrice.toFixed(3);
-                document.getElementById('calcSlPrice').innerText = slPrice.toFixed(3);
+            if (currentLivePrice > 0 && Number.isFinite(atr) && atr > 0) {
+                const digits = Number.isInteger(Number(symbolMarket.digits)) ? Number(symbolMarket.digits) : 3;
+                document.getElementById('calcTpPrice').innerText = (currentLivePrice + atr * 3).toFixed(digits);
+                document.getElementById('calcSlPrice').innerText = (currentLivePrice - atr * 1.5).toFixed(digits);
+            } else {
+                document.getElementById('calcTpPrice').innerText = '---';
+                document.getElementById('calcSlPrice').innerText = '---';
             }
         }
         function setSelectedItem(tf) {
@@ -758,7 +787,7 @@
 
                 const payload = {
                     timestamp: Math.floor(Date.now() / 1000),
-                    symbol: "Volatility 25 Index",
+                    symbol: selectedSymbol,
                     action: actionType,
                     volume: currentTrancheVol,
                     entry: entry,
@@ -789,60 +818,11 @@
             alert(`🚀 EXECUTED ${successCount} TRANCHES!\nTotal Volume: ${totalVolume} Lots (Split safely into max 200-lot dispatches).`);
         }
 
-     async function confirmTradeExecution() {
+        async function confirmTradeExecution() {
             const dir = document.getElementById('rec-dir').innerText;
-            const entry = parseFloat(document.getElementById('rec-entry').innerText);
-            const tp = parseFloat(document.getElementById('rec-tp').innerText);
-            const sl = parseFloat(document.getElementById('rec-sl').innerText);
-            
-            const lotText = document.getElementById('calcSafeLot').innerText;
-            let targetVolume = parseFloat(lotText) || 0.50;
-            
-            // Enforce single-trade maximum limit of 200 lots
-            const finalVolume = Math.min(200.00, Math.max(0.50, targetVolume));
-
-            const currentCapital = parseFloat(document.getElementById('calcCapitalInput').value) || 0;
-            const marginNeededText = document.getElementById('calcMarginRisk').innerText;
-            const marginNeeded = parseFloat(marginNeededText.replace('$', '')) || 0.35;
-
-            if (currentCapital < marginNeeded) {
-                alert(`❌ ORDER REJECTED: Insufficient Capital!`);
-                return;
-            }
-
-            const btn = document.getElementById('btnConfirmTrade');
-            btn.disabled = true;
-            btn.innerText = "⏳ DISPATCHING SINGLE ORDER...";
-
-            const payload = {
-                timestamp: Math.floor(Date.now() / 1000),
-                symbol: "Volatility 25 Index",
-                action: dir.includes("BUY") ? "BUY" : "SELL",
-                volume: finalVolume, // Single trade volume capped at 200 lots
-                entry: entry,
-                tp: tp,
-                sl: sl
-            };
-
-            try {
-                const res = await fetch('/api/execute-trade', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                const result = await res.json();
-                
-                if (res.ok) {
-                    alert(`🚀 SINGLE ORDER EXECUTED ON MT5!\nVolume: ${finalVolume} Lots\nTP: ${tp}\nSL: ${sl}`);
-                } else {
-                    alert(`❌ TRADE REJECTED BY MT5: ${result.message}`);
-                }
-            } catch (e) {
-                alert("Error connecting to Python Trade Server!");
-            } finally {
-                btn.disabled = false;
-                btn.innerText = "✅ EXECUTE ORDER (MT5)";
-            }
+            if (dir.startsWith('BUY')) return executeManualTrade('BUY', document.getElementById('btnConfirmTrade'));
+            if (dir.startsWith('SELL')) return executeManualTrade('SELL', document.getElementById('btnConfirmTrade'));
+            alert('No confirmed BUY or SELL recommendation is available.');
         }
 
         async function executeManualTrade(actionType, button) {
@@ -868,20 +848,40 @@
                 return;
             }
 
-            const entry = currentLivePrice || 0;
-            if (entry <= 0) {
-                alert("❌ MANUAL TRADE REJECTED: Live price not available yet.");
+            const quote = globalData?.mt5_account?.quote;
+            const entry = Number(actionType === 'BUY' ? quote?.ask : quote?.bid);
+            if (!Number.isFinite(entry) || entry <= 0) {
+                alert("❌ MANUAL TRADE REJECTED: A current MT5 quote is not available yet.");
+                return;
+            }
+
+            const symbolMarket = globalData.mt5_symbol || {};
+            const minVolume = Number(symbolMarket.volume_min);
+            const maxVolume = Number(symbolMarket.volume_max);
+            const volumeStep = Number(symbolMarket.volume_step);
+            if (
+                symbolMarket.available !== true ||
+                !Number.isFinite(minVolume) || minVolume <= 0 ||
+                !Number.isFinite(maxVolume) || maxVolume < minVolume ||
+                !Number.isFinite(volumeStep) || volumeStep <= 0
+            ) {
+                alert(`MT5 volume specifications are unavailable for ${selectedSymbol}; no order was sent.`);
                 return;
             }
 
             const volumeText = window.prompt(
-                `Enter MT5 lot volume for this ${actionType} order (maximum 200 lots):`,
-                '0.50'
+                `Enter MT5 lot volume for ${selectedSymbol} ${actionType} (broker min ${minVolume}, max ${maxVolume}, step ${volumeStep}):`,
+                String(minVolume)
             );
             if (volumeText === null) return;
             const finalVolume = Number(volumeText);
-            if (!Number.isFinite(finalVolume) || finalVolume <= 0 || finalVolume > 200) {
-                alert("Enter a valid MT5 lot volume greater than 0 and no more than 200.");
+            const volumeSteps = (finalVolume - minVolume) / volumeStep;
+            if (
+                !Number.isFinite(finalVolume) || finalVolume < minVolume ||
+                finalVolume > maxVolume || !Number.isFinite(volumeSteps) ||
+                Math.abs(volumeSteps - Math.round(volumeSteps)) > 1e-7
+            ) {
+                alert(`Enter a valid volume for ${selectedSymbol}: minimum ${minVolume}, maximum ${maxVolume}, step ${volumeStep}.`);
                 return;
             }
 
@@ -893,28 +893,29 @@
                 return;
             }
 
-            const tp = actionType === 'BUY' ? (entry + (atr * 3.0)) : (entry - (atr * 3.0));
-            const sl = actionType === 'BUY' ? (entry - (atr * 1.5)) : (entry + (atr * 1.5));
+            const slDistance = atr * 1.5;
+            const tpDistance = atr * 3.0;
+            const tp = actionType === 'BUY' ? (entry + tpDistance) : (entry - tpDistance);
+            const sl = actionType === 'BUY' ? (entry - slDistance) : (entry + slDistance);
 
             const riskLimit = Number(globalData.max_risk_per_trade_percent) || 1;
             const confirmed = window.confirm(
                 `Submit a REAL MT5 ${actionType} market order?\n\n` +
-                `Symbol: Volatility 25 Index\nVolume: ${finalVolume} lots\n` +
-                `Reference price: ${entry.toFixed(3)}\nStop loss: ${sl.toFixed(3)}\n` +
+                `Symbol: ${selectedSymbol}\nVolume: ${finalVolume} lots\n` +
+                `MT5 reference price: ${entry.toFixed(3)}\nStop loss: ${sl.toFixed(3)}\n` +
                 `Take profit: ${tp.toFixed(3)}\n` +
                 `Maximum stop-loss risk: ${riskLimit}% of account balance\n\n` +
-                `The server rechecks the live MT5 quote, open positions, margin, and risk.`
+                `The server recalculates stop/target from the live MT5 quote and rechecks open positions, margin, and risk.`
             );
             if (!confirmed) return;
 
             const payload = {
                 timestamp: Math.floor(Date.now() / 1000),
-                symbol: "Volatility 25 Index",
+                symbol: selectedSymbol,
                 action: actionType,
                 volume: finalVolume,
-                entry: entry,
-                tp: tp,
-                sl: sl
+                sl_distance: slDistance,
+                tp_distance: tpDistance
             };
 
             try {
@@ -926,7 +927,15 @@
                 const result = await res.json();
                 
                 if (res.ok) {
-                    alert(`🚀 MANUAL SINGLE ${actionType} ORDER EXECUTED!\nVolume: ${finalVolume} Lots\nTP: ${tp.toFixed(3)}\nSL: ${sl.toFixed(3)}`);
+                    const mt5Result = result.mt5_result || {};
+                    const actualSl = Number(mt5Result.sl);
+                    const actualTp = Number(mt5Result.tp);
+                    alert(
+                        `🚀 MANUAL SINGLE ${actionType} ORDER ACCEPTED!\nVolume: ${finalVolume} Lots\n` +
+                        `MT5 quote: ${Number(mt5Result.quote_price).toFixed(3)}\n` +
+                        `TP: ${(Number.isFinite(actualTp) ? actualTp : tp).toFixed(3)}\n` +
+                        `SL: ${(Number.isFinite(actualSl) ? actualSl : sl).toFixed(3)}`
+                    );
                 } else {
                     alert(`❌ MANUAL TRADE REJECTED: ${result.message}`);
                 }
@@ -1034,6 +1043,8 @@
             const autoEnabled = data.auto_trading_enabled === true;
             const mt5Ready = bridge.connection_verified === true && bridge.trade_allowed === true;
             const engineReady = data.agent_status === 'RUNNING';
+            const symbolReady = data.mt5_symbol?.available === true;
+            const positionOpen = Number(data.mt5_account?.open_positions) > 0;
 
             badge.innerText = enabled
                 ? (autoEnabled ? 'AUTO + MANUAL LIVE' : 'MANUAL LIVE ORDERS')
@@ -1044,25 +1055,35 @@
                 : 'Start with start_manual_trading.bat to enable manually confirmed MT5 orders.';
 
             document.querySelectorAll('.market-trade-button').forEach(button => {
-                button.disabled = !enabled || !mt5Ready || !engineReady;
+                button.disabled = !enabled || !mt5Ready || !engineReady || !symbolReady || positionOpen;
                 button.title = button.disabled
-                    ? 'Requires live trading mode, a connected MT5 account, and trading permission.'
+                    ? !symbolReady
+                        ? `MT5 quote and volume specifications are unavailable for ${selectedSymbol}.`
+                        : positionOpen
+                            ? 'The portfolio limit allows only one open position.'
+                            : 'Requires live trading mode, a connected MT5 account, and trading permission.'
                     : 'Submits a real MT5 order after volume entry and confirmation.';
             });
         }
 
-        async function fetchDashboardData() {
+        function renderDashboardState(data) {
             try {
-                const res = await fetch('agent_state.json?t=' + Date.now());
-                if (!res.ok) return;
-                globalData = await res.json();
+                setSelectedDashboardData(data);
+                currentLivePrice = Number(globalData.current_price) > 0
+                    ? Number(globalData.current_price)
+                    : 0;
                 renderTradingMode(globalData);
 
                 document.getElementById('last-update').innerText = `Synced: ${globalData.timestamp}`;
                 
                 if (globalData.current_price) {
                     currentLivePrice = globalData.current_price;
-                    document.getElementById('livePriceDisplay').innerText = `R_25: ${currentLivePrice.toFixed(3)}`;
+                    const derivSymbol = globalData.deriv_symbol || selectedSymbol;
+                    const digits = Number.isInteger(Number(globalData.mt5_symbol?.digits))
+                        ? Number(globalData.mt5_symbol.digits)
+                        : 3;
+                    document.getElementById('livePriceDisplay').innerText =
+                        `${selectedSymbol} (${derivSymbol}): ${currentLivePrice.toFixed(digits)}`;
 
                     const foundKey = Object.keys(globalData.timeframes).find(k => k.toLowerCase() === selectedTimeframe.toLowerCase());
                     const tf = foundKey ? globalData.timeframes[foundKey] : null;
@@ -1084,6 +1105,11 @@
                                 priceChartInstance.update('none');
                             }
                         }
+                    } else {
+                        currentLivePrice = 0;
+                        const derivSymbol = globalData.deriv_symbol || selectedSymbol;
+                        document.getElementById('livePriceDisplay').innerText =
+                            `${selectedSymbol} (${derivSymbol}): ---`;
                     }
                 }
 
@@ -1091,13 +1117,19 @@
 
                 if (globalData.cpr) {
                     const cpr = globalData.cpr;
-                    document.getElementById('cpr-r3').innerText = `${cpr.r3} / ${cpr.s3}`;
-                    document.getElementById('cpr-r1').innerText = `${cpr.r1} / ${cpr.s1}`;
-                    document.getElementById('cpr-zones').innerText = `${cpr.tc} / ${cpr.pivot} / ${cpr.bc}`;
+                    const displayLevel = value => Number.isFinite(Number(value)) ? Number(value) : '---';
+                    document.getElementById('cpr-r3').innerText = `${displayLevel(cpr.r3)} / ${displayLevel(cpr.s3)}`;
+                    document.getElementById('cpr-r1').innerText = `${displayLevel(cpr.r1)} / ${displayLevel(cpr.s1)}`;
+                    document.getElementById('cpr-zones').innerText =
+                        `${displayLevel(cpr.tc)} / ${displayLevel(cpr.pivot)} / ${displayLevel(cpr.bc)}`;
                     
                     const vcprEl = document.getElementById('vcpr-badge');
-                    vcprEl.innerText = cpr.is_virgin ? "vCPR: YES" : "vCPR: Tested";
-                    vcprEl.style.color = cpr.is_virgin ? "var(--accent-green)" : "var(--text-muted)";
+                    vcprEl.innerText = cpr.is_virgin === undefined
+                        ? "vCPR: Unavailable"
+                        : cpr.is_virgin ? "vCPR: YES" : "vCPR: Tested";
+                    vcprEl.style.color = cpr.is_virgin === undefined
+                        ? "var(--text-muted)"
+                        : cpr.is_virgin ? "var(--accent-green)" : "var(--text-muted)";
                 }
 
                 if (globalData.decision_audit) {
@@ -1134,13 +1166,23 @@
                     console.log("Chart render waiting for stable data frame...");
                 }
             } catch (e) {
+                console.error("Could not render dashboard state.", e);
+            }
+        }
+
+        async function fetchDashboardData() {
+            try {
+                const res = await fetch('agent_state.json?t=' + Date.now());
+                if (!res.ok) return;
+                renderDashboardState(await res.json());
+            } catch (e) {
                 console.log("Waiting for backend telemetry...");
             }
         }
 
         function updatePredictionsForSelectedTF(tf) {
             if (!tf || !tf.candles || tf.candles.length < 5) return;
-            const cpr = globalData.cpr;
+            const cpr = globalData.cpr || {};
             const currClose = currentLivePrice || tf.candles[tf.candles.length - 1].close;
             const atr = tf.atr || 1.0;
 
@@ -1149,12 +1191,22 @@
                 "TC": cpr.tc, "Pivot": cpr.pivot, "BC": cpr.bc,
                 "S1": cpr.s1, "S2": cpr.s2, "S3": cpr.s3
             };
+            const validLevels = Object.entries(levels)
+                .filter(([, value]) => Number.isFinite(Number(value)))
+                .map(([name, value]) => [name, Number(value)]);
+            if (validLevels.length === 0) {
+                activeSrTargetVal = null;
+                document.getElementById('sr-alert-box').innerText = 'CPR unavailable; waiting for daily history.';
+                document.getElementById('pred-target').innerText = '---';
+                document.getElementById('pred-distance').innerText = '---';
+                return;
+            }
 
-            let nearestName = "Pivot";
-            let nearestVal = cpr.pivot;
+            let nearestName = validLevels[0][0];
+            let nearestVal = validLevels[0][1];
             let minDist = Infinity;
 
-            for (let [name, val] of Object.entries(levels)) {
+            for (let [name, val] of validLevels) {
                 let dist = Math.abs(currClose - val);
                 if (dist < minDist) {
                     minDist = dist;
@@ -1448,9 +1500,35 @@
         function renderSelectedTimeframe() {
             if (!globalData) return;
 
-            const foundKey = Object.keys(globalData.timeframes).find(k => k.toLowerCase() === selectedTimeframe.toLowerCase());
-            const tf = foundKey ? globalData.timeframes[foundKey] : null;
-            if (!tf || !tf.candles) return;
+            const timeframes = globalData.timeframes || {};
+            const foundKey = Object.keys(timeframes).find(k => k.toLowerCase() === selectedTimeframe.toLowerCase());
+            const tf = foundKey ? timeframes[foundKey] : null;
+            if (!tf || !tf.candles || tf.candles.length === 0) {
+                ['tf-trend', 'tf-ema', 'tf-rsi', 'tf-atr', 'tf-pressure'].forEach(id => {
+                    document.getElementById(id).innerText = '---';
+                });
+                document.getElementById('sr-alert-box').innerText = 'Waiting for selected-symbol market data.';
+                document.getElementById('pred-target').innerText = '---';
+                document.getElementById('pred-distance').innerText = '---';
+                document.getElementById('rec-dir').innerText = 'SCANNING...';
+                document.getElementById('rec-entry').innerText = '---';
+                document.getElementById('rec-tp').innerText = '---';
+                document.getElementById('rec-sl').innerText = '---';
+                const confirmButton = document.getElementById('btnConfirmTrade');
+                confirmButton.disabled = true;
+                confirmButton.innerText = '⏳ Awaiting Market Data...';
+                activeSrTargetVal = null;
+                [priceChartInstance, rsiChartInstance, stochChartInstance].forEach(chart => {
+                    if (!chart) return;
+                    chart.data.labels = [];
+                    chart.data.datasets.forEach(dataset => {
+                        dataset.data = [];
+                        if (dataset.ohlcData) dataset.ohlcData = [];
+                    });
+                    chart.update('none');
+                });
+                return;
+            }
 
             document.getElementById('tf-trend').innerText = tf.trend;
             document.getElementById('tf-ema').innerText = `${tf.ema20 || '---'} / ${tf.ema50 || '---'} / ${tf.ema200 || '---'}`;
@@ -1460,7 +1538,12 @@
 
             if (tf.candles.length > 0 && !globalData.current_price) {
                 currentLivePrice = tf.candles[tf.candles.length - 1].close;
-                document.getElementById('livePriceDisplay').innerText = `R_25: ${currentLivePrice.toFixed(3)}`;
+                const derivSymbol = globalData.deriv_symbol || selectedSymbol;
+                const digits = Number.isInteger(Number(globalData.mt5_symbol?.digits))
+                    ? Number(globalData.mt5_symbol.digits)
+                    : 3;
+                document.getElementById('livePriceDisplay').innerText =
+                    `${selectedSymbol} (${derivSymbol}): ${currentLivePrice.toFixed(digits)}`;
             }
 
             updatePredictionsForSelectedTF(tf);
@@ -1649,60 +1732,7 @@
             };
 
             ws.onmessage = function(event) {
-                globalData = JSON.parse(event.data);
-                renderTradingMode(globalData);
-                document.getElementById('last-update').innerText = `Synced: ${globalData.timestamp}`;
-                if (globalData.current_price) {
-                    currentLivePrice = globalData.current_price;
-                    document.getElementById('livePriceDisplay').innerText = `R_25: ${currentLivePrice.toFixed(3)}`;
-                }
-
-
-                    if (globalData.decision_audit) {
-                    const audit = globalData.decision_audit;
-                    
-                    // 1. Update Market Regime
-                    document.getElementById('audit-regime').innerText = audit.regime || "SCANNING";
-                    
-                    // 2. Update Consensus Score with dynamic coloring
-                    const scoreEl = document.getElementById('audit-score');
-                    const score = audit.consensus_score || 0;
-                    scoreEl.innerText = score;
-                    scoreEl.style.color = score >= 65 ? 'var(--accent-green)' : (score <= -65 ? 'var(--accent-red)' : 'var(--accent-yellow)');
-                    
-                    // 3. Update Active Strategy Paths
-                    const pathsEl = document.getElementById('audit-paths');
-                    pathsEl.innerText = (audit.active_paths && audit.active_paths.length > 0) ? audit.active_paths.join(' | ') : 'None active (HOLD)';
-                    
-                    // 4. Update Detailed Reasoning Audit
-                    document.getElementById('audit-reasoning').innerText = audit.reasoning || "Analyzing market conditions...";
-                }
-                renderMt5State(globalData);
-
-                if (globalData.cpr) {
-                    const cpr = globalData.cpr;
-                    document.getElementById('cpr-r3').innerText = `${cpr.r3} / ${cpr.s3}`;
-                    document.getElementById('cpr-r1').innerText = `${cpr.r1} / ${cpr.s1}`;
-                    document.getElementById('cpr-zones').innerText = `${cpr.tc} / ${cpr.pivot} / ${cpr.bc}`;
-                    
-                    const vcprEl = document.getElementById('vcpr-badge');
-                    vcprEl.innerText = cpr.is_virgin ? "vCPR: YES" : "vCPR: Tested";
-                    vcprEl.style.color = cpr.is_virgin ? "var(--accent-green)" : "var(--text-muted)";
-                }
-
-                if (globalData.signal) {
-                    const sigText = globalData.signal;
-                    const sig = document.getElementById('val-signal');
-                    sig.innerText = sigText;
-                    sig.className = "signal-box " + (sigText.includes("BUY") ? "signal-buy" : sigText.includes("SELL") ? "signal-sell" : "signal-hold");
-                }
-
-                calculatePositionAndMargin();
-                try {
-                    renderSelectedTimeframe();
-                } catch (err) {
-                    console.log("Chart render waiting for stable data frame...");
-                }
+                renderDashboardState(JSON.parse(event.data));
             };
 
             ws.onclose = function() {

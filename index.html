@@ -34,10 +34,12 @@
             --border-color: #cbd5e1;
         }
 
-        html, body { height: 100vh; max-height: 100vh; margin: 0; padding: 4px; overflow: hidden; background-color: var(--bg-color); color: var(--text-main); font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; box-sizing: border-box; transition: background 0.3s, color 0.3s; }
+        * { box-sizing: border-box; }
+        html, body { min-height: 100%; margin: 0; padding: 0; background-color: var(--bg-color); color: var(--text-main); font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; transition: background 0.3s, color 0.3s; }
+        body { min-height: 100vh; display: flex; flex-direction: column; gap: 6px; padding: 8px; overflow-x: hidden; }
         
-        header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 2px; margin-bottom: 3px; height: 24px; }
-        h1 { margin: 0; font-size: 0.8rem; color: var(--accent-cyan); display: flex; align-items: center; gap: 8px; }
+        header { display: flex; justify-content: space-between; align-items: center; gap: 10px; border-bottom: 1px solid var(--border-color); padding: 2px 0 6px; min-height: 34px; }
+        h1 { margin: 0; font-size: clamp(0.9rem, 1.25vw, 1.15rem); color: var(--accent-cyan); display: flex; align-items: center; gap: 8px; min-width: 0; }
         .badge { background: var(--card-bg); border: 1px solid var(--border-color); padding: 1px 4px; border-radius: 4px; font-size: 0.58rem; color: var(--text-main); }
         .live-price-tag { background: rgba(6, 182, 212, 0.15); border: 1px solid var(--accent-cyan); color: var(--accent-cyan); padding: 1px 5px; border-radius: 4px; font-weight: bold; font-size: 0.65rem; }
         .countdown-badge-lg { background: rgba(245, 158, 11, 0.2); border: 1px solid var(--accent-yellow); color: var(--accent-yellow); padding: 1px 6px; border-radius: 4px; font-weight: bold; font-size: 0.7rem; letter-spacing: 0.5px; }
@@ -59,7 +61,7 @@
             display: block;
         }
 
-        .macro-bar { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; margin-bottom: 3px; }
+        .macro-bar { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
         .matrix-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 3px; padding: 2px 3px; text-align: center; display: flex; flex-direction: column; gap: 1px; }
         .matrix-title { font-size: 0.55rem; color: var(--text-muted); font-weight: bold; text-transform: uppercase; }
         .matrix-status { font-size: 0.58rem; font-weight: bold; padding: 1px; border-radius: 2px; }
@@ -67,10 +69,20 @@
         .status-bearish { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); }
         .matrix-timer { font-size: 0.58rem; font-weight: bold; color: var(--accent-yellow); background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 2px; padding: 1px; font-family: monospace; }
 
-        .top-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 3px; margin-bottom: 3px; }
+        .top-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+        .account-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+        .account-metrics .metric-row { flex-direction: row; align-items: center; gap: 6px; }
+        .account-metrics .metric-value { text-align: right; }
         
-        .dashboard-grid { display: grid; grid-template-columns: 1.35fr 0.85fr; gap: 4px; height: calc(100vh - 150px); }
-        .right-column { display: flex; flex-direction: column; gap: 3px; height: 100%; overflow: hidden; }
+        .dashboard-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(380px, 0.95fr); gap: 8px; min-height: 0; }
+        .dashboard-grid > .card { min-width: 0; min-height: 0; }
+        .right-column { display: grid; grid-template-rows: minmax(100px, 0.72fr) minmax(100px, 0.72fr) minmax(230px, 1.65fr); gap: 6px; min-width: 0; min-height: 0; }
+        .right-column > .card { min-height: 0; overflow: hidden; }
+        .market-alerts { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(180px, 1.3fr) minmax(180px, 1.3fr) repeat(2, minmax(130px, 0.8fr)); gap: 6px; }
+        .market-alerts > * { min-width: 0; overflow-wrap: anywhere; }
+        .market-alerts .signal-box { margin-top: 0; }
+        .market-trade-button { min-height: 22px; padding: 3px 6px; font-size: 0.62rem; }
+        [hidden] { display: none !important; }
 
         /* Confluence Table Styles */
         .confluence-side-box { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 2px; }
@@ -95,10 +107,8 @@
         .bullish { color: var(--accent-green); }
         .bearish { color: var(--accent-red); }
 
-        .controls-row { display: flex; gap: 3px; margin-top: 1px; }
         .btn { flex: 1; padding: 2px; font-size: 0.58rem; font-weight: bold; border-radius: 3px; border: none; cursor: pointer; color: white; }
         .btn-start { background: var(--accent-green); }
-        .btn-pause { background: var(--accent-yellow); color: #0f172a; }
         .btn-stop { background: var(--accent-red); }
         .btn-tool { background: var(--card-bg); border: 1px solid var(--accent-cyan); color: var(--accent-cyan); padding: 1px 5px; border-radius: 3px; font-size: 0.58rem; cursor: pointer; font-weight: bold; }
         .btn-tool:hover { background: rgba(6, 182, 212, 0.15); }
@@ -113,16 +123,116 @@
         .calc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; margin-top: 2px; font-size: 0.58rem; }
         .calc-card { background: rgba(0,0,0,0.03); border: 1px solid var(--border-color); padding: 2px 4px; border-radius: 3px; }
 
-        .chart-box { flex: 1; position: relative; min-height: 40px; margin-top: 1px; }
+        .chart-box { flex: 1; position: relative; min-height: 40px; margin-top: 1px; min-width: 0; }
+        .price-chart-box { flex: 2.5; min-height: 120px; }
+        .oscillator-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; flex: 0.75; min-height: 45px; }
+        .chart-legend { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 2px; padding-top: 2px; border-top: 1px solid var(--border-color); font-size: 0.52rem; color: var(--text-muted); }
+        .chart-legend-indicators { display: flex; gap: 6px; flex-wrap: wrap; }
+        .chart-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
+        .chart-metrics .metric-row { align-items: center; gap: 8px; min-width: 0; }
+        .chart-metrics .metric-value { text-align: right; min-width: 0; }
 
         .prediction-panel { background: linear-gradient(135deg, rgba(6, 182, 212, 0.08), var(--card-bg)); border: 1px solid var(--accent-cyan); }
         .sr-alert-pill { background: rgba(245, 158, 11, 0.15); border: 1px solid var(--accent-yellow); color: var(--accent-yellow); padding: 1px 5px; border-radius: 3px; font-weight: bold; font-size: 0.6rem; text-align: center; margin-bottom: 2px; }
         .forecast-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; margin-top: 1px; }
+        .forecast-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
         .forecast-box { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 3px; padding: 2px; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: space-between; }
         .forecast-step { font-size: 0.52rem; color: var(--text-muted); text-transform: uppercase; font-weight: bold; }
         .forecast-pattern { font-size: 0.55rem; font-weight: bold; margin-top: 1px; line-height: 1.1; }
 
         .theme-btn { background: none; border: 1px solid var(--border-color); color: var(--text-main); padding: 1px 5px; border-radius: 3px; cursor: pointer; font-size: 0.6rem; font-weight: bold; }
+
+        @media (min-width: 1100px) and (min-height: 680px) {
+            body { height: 100vh; height: 100dvh; overflow: hidden; }
+            .dashboard-grid { flex: 1; height: 0; }
+        }
+
+        @media (max-width: 1000px) {
+            body { padding: 6px; }
+            .dashboard-grid { grid-template-columns: minmax(0, 1fr) minmax(320px, 0.9fr); }
+            .right-column { grid-template-rows: minmax(100px, auto) minmax(100px, auto) minmax(230px, auto); }
+        }
+
+        @media (min-width: 761px) and (max-width: 1000px) and (min-height: 680px) {
+            body { height: 100vh; height: 100dvh; gap: 4px; overflow: hidden; }
+            .dashboard-grid { flex: 1; height: 0; }
+            .right-column { grid-template-rows: minmax(128px, 0.75fr) minmax(135px, 0.85fr) minmax(270px, 1.4fr); gap: 4px; }
+            .right-column > .card { padding: 2px 4px; }
+            .right-column .card h3 { margin-bottom: 1px; padding-bottom: 1px; }
+            .prediction-panel .sr-alert-pill { margin-bottom: 1px; padding: 0 4px; }
+            .forecast-grid { gap: 2px; }
+            .forecast-box { padding: 1px; }
+            .right-column .metric-row { margin: 0; font-size: 0.6rem; }
+            .right-column .confluence-side-box { gap: 3px; margin-top: 1px; }
+            .right-column .confluence-card-sm { padding: 2px 4px; }
+            .right-column .confluence-card-sm h4 { margin-bottom: 1px; padding-bottom: 1px; }
+            .right-column .confluence-item { margin: 1px 0; padding: 1px 2px; }
+            .right-column .trade-exec-card { margin-top: 1px; padding: 2px 4px; }
+            .right-column .exec-row { margin: 0; }
+            .right-column .btn-trade-confirm { margin-top: 1px; padding: 2px; }
+            .manual-trade-controls { margin-top: 2px !important; }
+            .manual-trade-controls .btn { padding: 2px !important; font-size: 0.6rem !important; }
+            .right-column #audit-reasoning { max-height: 28px !important; }
+        }
+
+        @media (max-width: 760px) {
+            header { flex-wrap: wrap; }
+            .macro-bar { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+            .top-grid, .dashboard-grid { grid-template-columns: minmax(0, 1fr); }
+            .dashboard-grid { height: auto; }
+            .dashboard-grid > .card { min-height: 460px; }
+            .right-column { display: flex; flex-direction: column; height: auto; overflow: visible; }
+            .right-column > .card { flex: none !important; min-height: auto; overflow: visible; }
+            .tf-links-container { flex-wrap: wrap; }
+            .account-metrics { grid-template-columns: 1fr; gap: 2px; }
+            .account-metrics .metric-row { flex-direction: row; align-items: center; }
+            .market-alerts { grid-template-columns: 1fr 1fr; }
+            .market-alerts .signal-box { grid-column: 1 / -1; }
+        }
+
+        @media (max-height: 679px) and (min-width: 761px) {
+            .dashboard-grid { grid-template-columns: minmax(0, 1.1fr) minmax(340px, 0.9fr); }
+            .dashboard-grid > .card { min-height: 460px; }
+            .right-column { display: flex; flex-direction: column; height: auto; overflow: visible; }
+            .right-column > .card { flex: none !important; min-height: auto; overflow: visible; }
+        }
+
+        @media (min-width: 1001px) and (max-height: 720px) {
+            body { height: 100vh; height: 100dvh; gap: 4px; padding: 6px; overflow: hidden; }
+            header { min-height: 30px; padding: 1px 0 4px; }
+            .macro-bar { gap: 4px; }
+            .matrix-card { padding: 1px 2px; gap: 0; }
+            .top-grid, .market-alerts { gap: 4px; }
+            .account-card { padding: 2px 4px !important; }
+            .account-card h3 { margin-bottom: 0 !important; padding-bottom: 1px; }
+            .account-metrics { gap: 4px; }
+            .account-metrics .metric-row { gap: 0; }
+            .dashboard-grid { flex: 1; height: 0; grid-template-columns: minmax(0, 1.25fr) minmax(380px, 0.95fr); gap: 6px; }
+            .dashboard-grid > .card { min-height: 0; padding: 3px 5px; }
+            .right-column { display: grid; grid-template-rows: minmax(96px, 0.65fr) minmax(88px, 0.6fr) minmax(225px, 1.75fr); gap: 4px; height: 100%; overflow: hidden; }
+            .right-column > .card { min-height: 0; overflow: hidden; padding: 2px 4px; }
+            .right-column .card h3 { margin-bottom: 1px; padding-bottom: 1px; }
+            .prediction-panel .sr-alert-pill { margin-bottom: 1px; padding: 0 4px; }
+            .forecast-grid { gap: 2px; }
+            .forecast-box { padding: 1px; }
+            .forecast-box canvas { height: 16px; }
+            .right-column .metric-row { margin: 0; font-size: 0.6rem; }
+            .right-column .confluence-side-box { gap: 2px; margin-top: 1px; }
+            .right-column .confluence-card-sm { padding: 2px 3px; }
+            .right-column .confluence-card-sm h4 { margin-bottom: 1px; padding-bottom: 1px; font-size: 0.58rem; }
+            .right-column .confluence-item { margin: 0; padding: 0 1px; font-size: 0.54rem; }
+            .right-column .status-light { padding: 0 2px; font-size: 0.5rem; gap: 1px; }
+            .right-column .trade-exec-card { margin-top: 1px; padding: 2px 4px; }
+            .right-column .exec-row { margin: 0; font-size: 0.56rem; }
+            .right-column .btn-trade-confirm { margin-top: 1px; padding: 2px; font-size: 0.58rem; }
+            .market-trade-button { min-height: 19px; padding: 2px 4px; font-size: 0.56rem; }
+            .right-column #audit-reasoning { max-height: 24px !important; padding: 2px !important; }
+            .dashboard-grid > .card > h3 { margin-bottom: 1px; padding-bottom: 1px; }
+                .chart-metrics .metric-row { margin: 0; }
+            .chart-legend { margin-top: 0; padding-top: 1px; gap: 4px; }
+            .chart-legend-indicators { gap: 4px; }
+            .price-chart-box, .oscillator-charts { min-height: 0; }
+        }
     </style>
 </head>
 <body data-theme="light">
@@ -146,38 +256,35 @@
         <div class="matrix-card"><span class="matrix-title">D1</span><span id="matrix-status-d1" class="matrix-status status-flat">---</span><span id="matrix-timer-d1" class="matrix-timer">00:00</span></div>
     </div>
 
-    <!-- Top Status Bar with MT5 File Bridge Card -->
+    <!-- MT5 account summary -->
     <div class="top-grid">
-        <div class="card" style="padding: 3px 5px;">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <span style="font-size:0.6rem; font-weight:bold; color:var(--accent-cyan);">Agent Status:</span>
-                <span id="agentStatusBadge" class="badge" style="color:var(--accent-yellow);">CONNECTING...</span>
-            </div>
-            <div class="controls-row">
-                <button class="btn btn-start" onclick="sendControl('START')">▶ START</button>
-                <button class="btn btn-pause" onclick="sendControl('PAUSE')">⏸ PAUSE</button>
-                <button class="btn btn-stop" onclick="sendControl('STOP')">⏹ STOP</button>
-            </div>
-            <div class="signal-box signal-hold" id="val-signal">HOLD / SCANNING</div>
-        </div>
-
-        <div class="card" style="padding: 3px 5px;">
+        <div class="card" style="padding: 3px 5px;" hidden>
             <h3 style="margin-bottom:1px;">📍 Daily CPR & <span id="vcpr-badge" style="color:var(--accent-yellow);">vCPR: ---</span></h3>
             <div class="metric-row"><span>R3 / S3:</span> <span class="metric-value"><span id="cpr-r3">---</span> / <span id="cpr-s3">---</span></span></div>
             <div class="metric-row"><span>R1 / S1:</span> <span class="metric-value"><span id="cpr-r1">---</span> / <span id="cpr-s1">---</span></span></div>
             <div class="metric-row"><span>TC / P / BC:</span> <span class="metric-value" style="color:var(--accent-cyan);" id="cpr-zones">---</span></div>
         </div>
 
-        <!-- MT5 file-bridge account telemetry -->
-        <div class="card" style="padding: 3px 5px; border-color: var(--accent-cyan);">
+        <!-- Direct Python MT5 account telemetry -->
+        <div class="card account-card" style="padding: 3px 5px; border-color: var(--accent-cyan);">
             <h3 style="margin-bottom:1px;">
-                <span>🔗 MT5 File Bridge</span>
+                <span>🔗 MT5 Account</span>
                 <span id="mt5-status-badge" class="badge" style="color:var(--accent-red);">NOT CONFIGURED</span>
             </h3>
-            <div class="metric-row"><span>Balance / Equity:</span> <span class="metric-value"><span id="mt5-balance">--</span> / <span id="mt5-equity" style="color:var(--accent-cyan);">--</span></span></div>
-            <div class="metric-row"><span>Open Pos / Floating P/L:</span> <span class="metric-value"><span id="mt5-open-pos">--</span> / <span id="mt5-floating-pnl" style="color:var(--text-muted);">--</span></span></div>
-            <div class="metric-row"><span>Today's Net P/L:</span> <span class="metric-value" id="mt5-today-pnl" style="color:var(--text-muted); font-weight:bold;">--</span></div>
+            <div class="account-metrics">
+                <div class="metric-row"><span>Balance / Equity:</span> <span class="metric-value"><span id="mt5-balance">--</span> / <span id="mt5-equity" style="color:var(--accent-cyan);">--</span></span></div>
+                <div class="metric-row"><span>Open Pos / Floating P/L:</span> <span class="metric-value"><span id="mt5-open-pos">--</span> / <span id="mt5-floating-pnl" style="color:var(--text-muted);">--</span></span></div>
+                <div class="metric-row"><span>Today's Net P/L:</span> <span class="metric-value" id="mt5-today-pnl" style="color:var(--text-muted); font-weight:bold;">--</span></div>
+            </div>
         </div>
+    </div>
+
+    <div class="market-alerts" aria-label="Market conditions and manual trading">
+        <div class="signal-box signal-hold" id="val-signal">HOLD / SCANNING</div>
+        <div id="tf-squeeze-state" style="font-size: 0.72rem; font-weight: bold; text-align: center; padding: 2px; border-radius: 3px; background: rgba(245, 158, 11, 0.15); border: 1px solid var(--accent-yellow); color: var(--accent-yellow);">🟡 CONSOLIDATION (Squeeze)</div>
+        <div id="tf-breakout-alert" style="font-size: 0.72rem; font-weight: bold; text-align: center; padding: 2px; border-radius: 3px; background: rgba(6, 182, 212, 0.15); border: 1px solid var(--accent-cyan); color: var(--accent-cyan);">⚡ STANDBY</div>
+        <button class="btn btn-start market-trade-button" onclick="executeManualTrade('BUY')">🟢 MANUAL BUY</button>
+        <button class="btn btn-stop market-trade-button" onclick="executeManualTrade('SELL')">🔴 MANUAL SELL</button>
     </div>
 
     <div class="dashboard-grid">
@@ -201,27 +308,14 @@
                 </div>
             </h3>
             
-            <div style="display: grid; grid-template-columns: 1fr; gap: 2px;">
-                <div>
-                    <div class="metric-row"><span>Trend:</span> <span class="metric-value" id="tf-trend">---</span></div>
-                    <div class="metric-row"><span>EMA 20/50/200:</span> <span class="metric-value" id="tf-ema" style="font-size:0.52rem;">---</span></div>
-                    <div class="metric-row"><span>RSI(10) / ATR:</span> <span class="metric-value"><span id="tf-rsi">---</span> / <span id="tf-atr">---</span></span></div>
-                    <div class="metric-row"><span>Pressure:</span> <span class="metric-value" id="tf-pressure">---</span></div>
-                </div>
+            <div class="chart-metrics">
+                <div class="metric-row"><span>Trend:</span> <span class="metric-value" id="tf-trend">---</span></div>
+                <div class="metric-row"><span>EMA 20/50/200:</span> <span class="metric-value" id="tf-ema" style="font-size:0.52rem;">---</span></div>
+                <div class="metric-row"><span>RSI(10) / ATR:</span> <span class="metric-value"><span id="tf-rsi">---</span> / <span id="tf-atr">---</span></span></div>
+                <div class="metric-row"><span>Pressure:</span> <span class="metric-value" id="tf-pressure">---</span></div>
             </div>
 
-            <div style="font-size: 0.52rem; color: var(--text-muted); margin-top:1px; display:flex; gap:6px; flex-wrap:wrap; justify-content:space-between;">
-                <div>
-                    <span style="color:var(--accent-cyan)">● EMA20</span>
-                    <span style="color:var(--accent-yellow)">● EMA50</span>
-                    <span style="color:var(--accent-purple)">● EMA200</span>
-                    <span style="color:#ec4899; font-weight:bold;">--- BB Upper</span>
-                    <span style="color:#8b5cf6; font-weight:bold;">--- BB Lower</span>
-                    <span style="color:#FF8C00; font-weight:bold;">▬ Prev Open/Close</span>
-                </div>
-                <span style="color:var(--accent-yellow); font-weight:bold;">💡 Click chart to add/remove custom line</span>
-            </div>
-            <div class="chart-box" style="flex: 2; min-height: 120px;">
+            <div class="chart-box price-chart-box">
                 <canvas id="priceChart"></canvas>
             </div>
 
@@ -229,16 +323,27 @@
                 <span>RSI (10) [OB: 85 / OS: 15]</span>
                 <span style="color: var(--accent-pink);">Stochastic (%K 16, %D 3)</span>
             </div>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; flex: 1; min-height: 45px;">
+            <div class="oscillator-charts">
                 <div class="chart-box" style="min-height: 45px;"><canvas id="rsiChart"></canvas></div>
                 <div class="chart-box" style="min-height: 45px;"><canvas id="stochChart"></canvas></div>
             </div>
+
+            <div class="chart-legend" aria-label="Price chart indicator legend">
+                <div class="chart-legend-indicators">
+                    <span style="color:var(--accent-cyan)">● EMA20</span>
+                    <span style="color:var(--accent-yellow)">● EMA50</span>
+                    <span style="color:var(--accent-purple)">● EMA200</span>
+                    <span style="color:#ec4899; font-weight:bold;">--- BB Upper</span>
+                    <span style="color:#8b5cf6; font-weight:bold;">--- BB Lower</span>
+                    <span style="color:#FF8C00; font-weight:bold;">▬ Prev Open/Close</span>
+                </div>
+            </div>
         </div>
 
-        <!-- Right Column: Capital Calculator, Forecast & Confluence Matrix -->
+        <!-- Right Column: Forecast, decision audit, and confluence matrix -->
         <div class="right-column">
             <!-- VIX 25 SMART CAPITAL & LOT SIZE CALCULATOR (MAX 1000 LOTS) -->
-            <div class="card" style="flex: 1.3; min-height: 0;">
+            <div class="card" style="flex: 1.3; min-height: 0;" hidden>
                 <h3>
                     <span>🧮 VIX 25 Capital & Safe Lot Calculator</span>
                     <span id="plan-date-tag" class="badge" style="color:var(--accent-red);">NOT CONNECTED</span>
@@ -273,18 +378,15 @@
                     <div class="metric-row"><span>Calc Price TP / SL:</span> <span class="metric-value"><span id="calcTpPrice" style="color:var(--accent-green);">---</span> / <span id="calcSlPrice" style="color:var(--accent-red);">---</span></span></div>
                 </div>
 
-                <!-- Prominent Relocated Alerts -->
-                <div style="margin-top:3px; display:grid; grid-template-columns: 1fr; gap:2px;">
-                    <div id="tf-squeeze-state" style="font-size: 0.72rem; font-weight: bold; text-align: center; padding: 2px; border-radius: 3px; background: rgba(245, 158, 11, 0.15); border: 1px solid var(--accent-yellow); color: var(--accent-yellow);">🟡 CONSOLIDATION (Squeeze)</div>
-                    <div id="tf-breakout-alert" style="font-size: 0.72rem; font-weight: bold; text-align: center; padding: 2px; border-radius: 3px; background: rgba(6, 182, 212, 0.15); border: 1px solid var(--accent-cyan); color: var(--accent-cyan);">⚡ STANDBY</div>
-                </div>
             </div>
 
             <div class="card prediction-panel" style="flex: 0.95; min-height: 0;">
                 <h3>🔮 S/R Proximity & Open/Close Forecast</h3>
                 <div id="sr-alert-box" class="sr-alert-pill">Scanning S/R...</div>
-                <div class="metric-row"><span>Target:</span> <span class="metric-value" id="pred-target" style="color:var(--accent-cyan);">---</span></div>
-                <div class="metric-row"><span>Distance:</span> <span class="metric-value" id="pred-distance">---</span></div>
+                <div class="forecast-summary">
+                    <div class="metric-row"><span>Target:</span> <span class="metric-value" id="pred-target" style="color:var(--accent-cyan);">---</span></div>
+                    <div class="metric-row"><span>Distance:</span> <span class="metric-value" id="pred-distance">---</span></div>
+                </div>
                 
                 <div class="forecast-grid" id="forecast-container">
                     <div class="forecast-box"><div class="forecast-step">T+1</div><canvas width="32" height="22"></canvas><div class="forecast-pattern">Loading...</div></div>
@@ -338,11 +440,6 @@
                     <button id="btnConfirmTrade" class="btn-trade-confirm" onclick="confirmTradeExecution()" disabled>⏳ Awaiting Confluences...</button>
                 </div>
 
-                <!-- Manual Trade Execution Panel -->
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 3px; margin-top: 3px;">
-                    <button class="btn btn-start" style="padding: 4px; font-size: 0.65rem;" onclick="executeManualTrade('BUY')">🟢 MANUAL BUY</button>
-                    <button class="btn btn-stop" style="padding: 4px; font-size: 0.65rem;" onclick="executeManualTrade('SELL')">🔴 MANUAL SELL</button>
-                </div>
             </div>
         </div>
     </div>
@@ -468,14 +565,6 @@
         function clearDrawnLines() {
             drawnHorizontalLines = [];
             if (priceChartInstance) priceChartInstance.update('none');
-        }
-
-        async function sendControl(action) {
-            await fetch('/api/control', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: action })
-            });
         }
 
         function evaluateConfluences(tf) {
@@ -901,10 +990,6 @@
 
                 document.getElementById('last-update').innerText = `Synced: ${globalData.timestamp}`;
                 
-                if (globalData.agent_status) {
-                    document.getElementById('agentStatusBadge').innerText = globalData.agent_status;
-                }
-
                 if (globalData.current_price) {
                     currentLivePrice = globalData.current_price;
                     document.getElementById('livePriceDisplay').innerText = `R_25: ${currentLivePrice.toFixed(3)}`;
@@ -1196,14 +1281,14 @@
 
                     ctx.beginPath();
                     ctx.strokeStyle = color;
-                    ctx.lineWidth = 1.2;
+                    ctx.lineWidth = 2;
                     ctx.moveTo(x, highY);
                     ctx.lineTo(x, lowY);
                     ctx.stroke();
 
                     const bodyTop = Math.min(openY, closeY);
                     const bodyHeight = Math.max(Math.abs(openY - closeY), 2);
-                    const barWidth = Math.max(2, (chart.chartArea.width / candles.length) * 0.65);
+                    const barWidth = Math.max(3, (chart.chartArea.width / candles.length) * 0.85);
 
                     ctx.fillStyle = color;
                     ctx.fillRect(x - barWidth / 2, bodyTop, barWidth, bodyHeight);
@@ -1312,7 +1397,10 @@
             evaluateConfluences(tf);
 
             const cpr = globalData.cpr || { r3:0, r2:0, r1:0, tc:0, pivot:0, bc:0, s1:0, s2:0, s3:0 };
-            const candlesSlice = tf.candles;
+            const focusRecentCandles = ['3m', '5m'].includes(selectedTimeframe.toLowerCase());
+            const visibleCandleCount = tf.candles.length;
+            const displayStartIndex = Math.max(0, tf.candles.length - visibleCandleCount);
+            const candlesSlice = tf.candles.slice(displayStartIndex);
             const baseTimestamp = globalData.timestamp ? globalData.timestamp : Math.floor(Date.now() / 1000);
             
             const labels = candlesSlice.map((c, i) => {
@@ -1329,12 +1417,13 @@
 
             const closes = candlesSlice.map(c => c.close);
 
-            const bbUpper = tf.bb_upper || closes;
-            const bbMiddle = tf.bb_middle || closes;
-            const bbLower = tf.bb_lower || closes;
-            const ema20Arr = tf.ema20_history || closes;
-            const ema50Arr = tf.ema50_history || closes;
-            const ema200Arr = tf.ema200_history || closes;
+            const visibleSeries = values => (values || tf.candles.map(c => c.close)).slice(displayStartIndex);
+            const bbUpper = visibleSeries(tf.bb_upper);
+            const bbMiddle = visibleSeries(tf.bb_middle);
+            const bbLower = visibleSeries(tf.bb_lower);
+            const ema20Arr = visibleSeries(tf.ema20_history);
+            const ema50Arr = visibleSeries(tf.ema50_history);
+            const ema200Arr = visibleSeries(tf.ema200_history);
 
             const prevOpenVal = tf.prev_day_open || closes[0];
             const prevCloseVal = tf.prev_day_close || closes[0];
@@ -1342,8 +1431,13 @@
             const prevOpenArr = candlesSlice.map(() => prevOpenVal);
             const prevCloseArr = candlesSlice.map(() => prevCloseVal);
 
-            const localHighs = [...candlesSlice.map(c => c.high), ...bbUpper, prevOpenVal, prevCloseVal, ...drawnHorizontalLines];
-            const localLows = [...candlesSlice.map(c => c.low), ...bbLower, prevOpenVal, prevCloseVal, ...drawnHorizontalLines];
+            const candleLow = Math.min(...candlesSlice.map(c => c.low));
+            const candleHigh = Math.max(...candlesSlice.map(c => c.high));
+            const scaleMargin = (candleHigh - candleLow) * 0.15;
+            const nearbyPriceLevels = [prevOpenVal, prevCloseVal, ...drawnHorizontalLines]
+                .filter(price => !focusRecentCandles || (price >= candleLow - scaleMargin && price <= candleHigh + scaleMargin));
+            const localHighs = [...candlesSlice.map(c => c.high), ...bbUpper, ...nearbyPriceLevels];
+            const localLows = [...candlesSlice.map(c => c.low), ...bbLower, ...nearbyPriceLevels];
             const minY = Math.min(...localLows) - 0.5;
             const maxY = Math.max(...localHighs) + 0.5;
 
@@ -1410,7 +1504,7 @@
                 priceChartInstance.update('none');
             }
 
-            const rsiSlice = tf.rsi_history || candlesSlice.map(() => 50);
+            const rsiSlice = visibleSeries(tf.rsi_history || tf.candles.map(() => 50));
             const obArray = candlesSlice.map(() => 85);
             const osArray = candlesSlice.map(() => 15);
 
@@ -1442,8 +1536,8 @@
                 rsiChartInstance.update('none');
             }
 
-            const stochK = tf.stoch_k_history || candlesSlice.map(() => 50);
-            const stochD = tf.stoch_d_history || candlesSlice.map(() => 50);
+            const stochK = visibleSeries(tf.stoch_k_history || tf.candles.map(() => 50));
+            const stochD = visibleSeries(tf.stoch_d_history || tf.candles.map(() => 50));
 
             if (!stochChartInstance) {
                 const sCtx = document.getElementById('stochChart').getContext('2d');
@@ -1487,10 +1581,6 @@
             ws.onmessage = function(event) {
                 globalData = JSON.parse(event.data);
                 document.getElementById('last-update').innerText = `Synced: ${globalData.timestamp}`;
-                if (globalData.agent_status) {
-                    document.getElementById('agentStatusBadge').innerText = globalData.agent_status;
-                }
-                
                 if (globalData.current_price) {
                     currentLivePrice = globalData.current_price;
                     document.getElementById('livePriceDisplay').innerText = `R_25: ${currentLivePrice.toFixed(3)}`;

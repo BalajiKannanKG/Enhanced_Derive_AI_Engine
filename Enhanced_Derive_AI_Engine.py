@@ -42,6 +42,7 @@ def load_percentage_setting(name, default):
 MAX_RISK_PER_TRADE_PERCENT = load_percentage_setting("MAX_RISK_PER_TRADE_PERCENT", 1.0)
 MAX_DAILY_LOSS_PERCENT = load_percentage_setting("MAX_DAILY_LOSS_PERCENT", 2.0)
 LIVE_TRADING_ENABLED = False
+AUTO_TRADING_ENABLED = False
 agent_status = "DATA ONLY"
 current_signal = "HOLD / SCANNING"
 current_price = 2785.007
@@ -393,7 +394,7 @@ def check_and_auto_trigger_trade(agent_state):
     )
     agent_state["decision_audit"] = audit
 
-    if not LIVE_TRADING_ENABLED or agent_status != "RUNNING":
+    if not LIVE_TRADING_ENABLED or not AUTO_TRADING_ENABLED or agent_status != "RUNNING":
         return
 
     mt5_account = agent_state.get("mt5_account", {})
@@ -579,6 +580,9 @@ def broadcast_state_update():
             "timeframes": timeframes_dict,
             "mt5_account": mt5_account_data,
             "mt5_bridge": mt5_status,
+            "live_trading_enabled": LIVE_TRADING_ENABLED,
+            "auto_trading_enabled": AUTO_TRADING_ENABLED,
+            "max_risk_per_trade_percent": MAX_RISK_PER_TRADE_PERCENT,
             "vix25_specs": {
                 "min_lot": 0.50,
                 "max_lot": 200.00,
@@ -857,7 +861,7 @@ class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
             if agent_status != "RUNNING":
                 self._send_json(409, {
                     "status": "REJECTED",
-                    "message": "Start the engine from the dashboard before submitting an order."
+                    "message": "Manual order dispatch is not armed. Restart using the manual live-trading launcher."
                 })
                 return
 
@@ -975,21 +979,37 @@ def run_websocket_server():
         print(f"WS Server note: {e}")
 
 def main():
-    global LIVE_TRADING_ENABLED
+    global LIVE_TRADING_ENABLED, AUTO_TRADING_ENABLED, agent_status
     parser = argparse.ArgumentParser(description="Run the local Deriv dashboard and market-data engine.")
     parser.add_argument(
         "--enable-live-trading",
         action="store_true",
-        help="Allow the engine and dashboard to write trade requests to the configured MT5 files directory."
+        help="Allow manually confirmed orders from the dashboard to be sent to MT5."
+    )
+    parser.add_argument(
+        "--enable-auto-trading",
+        action="store_true",
+        help="Allow strategy-generated orders; requires --enable-live-trading."
     )
     args = parser.parse_args()
     LIVE_TRADING_ENABLED = args.enable_live_trading
+    AUTO_TRADING_ENABLED = args.enable_auto_trading
+
+    if AUTO_TRADING_ENABLED and not LIVE_TRADING_ENABLED:
+        parser.error("--enable-auto-trading requires --enable-live-trading.")
 
     if LIVE_TRADING_ENABLED:
         if not mt5_bridge.connect():
             parser.error(f"Cannot enable live trading: {mt5_bridge.status()['detail']}")
-        print("LIVE TRADING ENABLED for this run. Use the dashboard Start control to activate trading.")
+        agent_status = "RUNNING"
+        print(
+            "MANUALLY CONFIRMED LIVE TRADING ENABLED for this run. Dashboard "
+            "Buy/Sell orders require a volume entry and browser confirmation."
+        )
+        if AUTO_TRADING_ENABLED:
+            print("AUTOMATED STRATEGY ORDERS ARE ALSO ENABLED.")
     else:
+        agent_status = "DATA ONLY"
         print("Live order execution is disabled. MT5 account data remains read-only.")
 
     print("Initializing initial agent state cache...")

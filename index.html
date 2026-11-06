@@ -82,6 +82,7 @@
         .market-alerts > * { min-width: 0; overflow-wrap: anywhere; }
         .market-alerts .signal-box { margin-top: 0; }
         .market-trade-button { min-height: 22px; padding: 3px 6px; font-size: 0.62rem; }
+        .market-trade-button:disabled { opacity: 0.45; cursor: not-allowed; }
         [hidden] { display: none !important; }
 
         /* Confluence Table Styles */
@@ -269,7 +270,10 @@
         <div class="card account-card" style="padding: 3px 5px; border-color: var(--accent-cyan);">
             <h3 style="margin-bottom:1px;">
                 <span>🔗 MT5 Account</span>
-                <span id="mt5-status-badge" class="badge" style="color:var(--accent-red);">NOT CONFIGURED</span>
+                <span style="display:flex; align-items:center; gap:6px;">
+                    <span id="order-mode-badge" class="badge" style="color:var(--accent-red);">ORDERS DISABLED</span>
+                    <span id="mt5-status-badge" class="badge" style="color:var(--accent-red);">NOT CONFIGURED</span>
+                </span>
             </h3>
             <div class="account-metrics">
                 <div class="metric-row"><span>Balance / Equity:</span> <span class="metric-value"><span id="mt5-balance">--</span> / <span id="mt5-equity" style="color:var(--accent-cyan);">--</span></span></div>
@@ -283,8 +287,8 @@
         <div class="signal-box signal-hold" id="val-signal">HOLD / SCANNING</div>
         <div id="tf-squeeze-state" style="font-size: 0.72rem; font-weight: bold; text-align: center; padding: 2px; border-radius: 3px; background: rgba(245, 158, 11, 0.15); border: 1px solid var(--accent-yellow); color: var(--accent-yellow);">🟡 CONSOLIDATION (Squeeze)</div>
         <div id="tf-breakout-alert" style="font-size: 0.72rem; font-weight: bold; text-align: center; padding: 2px; border-radius: 3px; background: rgba(6, 182, 212, 0.15); border: 1px solid var(--accent-cyan); color: var(--accent-cyan);">⚡ STANDBY</div>
-        <button class="btn btn-start market-trade-button" onclick="executeManualTrade('BUY')">🟢 MANUAL BUY</button>
-        <button class="btn btn-stop market-trade-button" onclick="executeManualTrade('SELL')">🔴 MANUAL SELL</button>
+        <button class="btn btn-start market-trade-button" onclick="executeManualTrade('BUY', this)" disabled>🟢 MANUAL BUY</button>
+        <button class="btn btn-stop market-trade-button" onclick="executeManualTrade('SELL', this)" disabled>🔴 MANUAL SELL</button>
     </div>
 
     <div class="dashboard-grid">
@@ -762,6 +766,8 @@
                     sl: sl
                 };
 
+                const buttons = [...document.querySelectorAll('.market-trade-button')];
+                buttons.forEach(item => { item.disabled = true; });
                 try {
                     const res = await fetch('/api/execute-trade', {
                         method: 'POST',
@@ -839,7 +845,23 @@
             }
         }
 
-        async function executeManualTrade(actionType) {
+        async function executeManualTrade(actionType, button) {
+            if (!globalData || globalData.live_trading_enabled !== true) {
+                alert("Live trading is disabled. Start the engine with start_manual_trading.bat to enable manual orders.");
+                return;
+            }
+
+            const bridge = globalData.mt5_bridge || {};
+            if (!bridge.connection_verified || !bridge.trade_allowed || globalData.agent_status !== 'RUNNING') {
+                alert(bridge.detail || "Manual trading requires a connected MT5 account with trading enabled.");
+                return;
+            }
+
+            if (!['BUY', 'SELL'].includes(actionType)) {
+                alert("Invalid manual trade direction.");
+                return;
+            }
+
             const openPos = (globalData && globalData.mt5_account) ? (globalData.mt5_account.open_positions || 0) : 0;
             if (openPos > 0) {
                 alert("❌ MANUAL TRADE REJECTED: Active trade already open on MT5.");
@@ -852,17 +874,38 @@
                 return;
             }
 
-            let targetVolume = parseFloat(document.getElementById('calcSafeLot').innerText.replace(' Lots', '')) || 0.50;
-            const finalVolume = Math.min(200.00, Math.max(0.50, targetVolume));
+            const volumeText = window.prompt(
+                `Enter MT5 lot volume for this ${actionType} order (maximum 200 lots):`,
+                '0.50'
+            );
+            if (volumeText === null) return;
+            const finalVolume = Number(volumeText);
+            if (!Number.isFinite(finalVolume) || finalVolume <= 0 || finalVolume > 200) {
+                alert("Enter a valid MT5 lot volume greater than 0 and no more than 200.");
+                return;
+            }
 
-            // Use current ATR from selected timeframe for professional 1:2 R:R
-            const atr = (globalData && globalData.timeframes && globalData.timeframes[selectedTimeframe]) ? globalData.timeframes[selectedTimeframe].atr : 1.0;
+            const selectedTimeframeData = Object.entries(globalData.timeframes || {})
+                .find(([timeframe]) => timeframe.toLowerCase() === selectedTimeframe.toLowerCase())?.[1];
+            const atr = Number(selectedTimeframeData?.atr);
+            if (!Number.isFinite(atr) || atr <= 0) {
+                alert("The selected timeframe does not have valid ATR data; no order was sent.");
+                return;
+            }
 
             const tp = actionType === 'BUY' ? (entry + (atr * 3.0)) : (entry - (atr * 3.0));
             const sl = actionType === 'BUY' ? (entry - (atr * 1.5)) : (entry + (atr * 1.5));
 
-            document.getElementById('calcTpPrice').innerText = tp.toFixed(3);
-            document.getElementById('calcSlPrice').innerText = sl.toFixed(3);
+            const riskLimit = Number(globalData.max_risk_per_trade_percent) || 1;
+            const confirmed = window.confirm(
+                `Submit a REAL MT5 ${actionType} market order?\n\n` +
+                `Symbol: Volatility 25 Index\nVolume: ${finalVolume} lots\n` +
+                `Reference price: ${entry.toFixed(3)}\nStop loss: ${sl.toFixed(3)}\n` +
+                `Take profit: ${tp.toFixed(3)}\n` +
+                `Maximum stop-loss risk: ${riskLimit}% of account balance\n\n` +
+                `The server rechecks the live MT5 quote, open positions, margin, and risk.`
+            );
+            if (!confirmed) return;
 
             const payload = {
                 timestamp: Math.floor(Date.now() / 1000),
@@ -888,7 +931,9 @@
                     alert(`❌ MANUAL TRADE REJECTED: ${result.message}`);
                 }
             } catch (e) {
-                alert("Error connecting to Python Trade Server!");
+                alert("Could not reach the local trade server. Check the engine console before retrying to avoid duplicate orders.");
+            } finally {
+                renderTradingMode(globalData);
             }
         }
 
@@ -982,11 +1027,36 @@
             }
         }
 
+        function renderTradingMode(data) {
+            const badge = document.getElementById('order-mode-badge');
+            const bridge = data.mt5_bridge || {};
+            const enabled = data.live_trading_enabled === true;
+            const autoEnabled = data.auto_trading_enabled === true;
+            const mt5Ready = bridge.connection_verified === true && bridge.trade_allowed === true;
+            const engineReady = data.agent_status === 'RUNNING';
+
+            badge.innerText = enabled
+                ? (autoEnabled ? 'AUTO + MANUAL LIVE' : 'MANUAL LIVE ORDERS')
+                : 'ORDERS DISABLED';
+            badge.style.color = enabled ? 'var(--accent-red)' : 'var(--text-muted)';
+            badge.title = enabled
+                ? 'Real MT5 orders can be submitted after entering volume and confirming each dashboard order.'
+                : 'Start with start_manual_trading.bat to enable manually confirmed MT5 orders.';
+
+            document.querySelectorAll('.market-trade-button').forEach(button => {
+                button.disabled = !enabled || !mt5Ready || !engineReady;
+                button.title = button.disabled
+                    ? 'Requires live trading mode, a connected MT5 account, and trading permission.'
+                    : 'Submits a real MT5 order after volume entry and confirmation.';
+            });
+        }
+
         async function fetchDashboardData() {
             try {
                 const res = await fetch('agent_state.json?t=' + Date.now());
                 if (!res.ok) return;
                 globalData = await res.json();
+                renderTradingMode(globalData);
 
                 document.getElementById('last-update').innerText = `Synced: ${globalData.timestamp}`;
                 
@@ -1580,6 +1650,7 @@
 
             ws.onmessage = function(event) {
                 globalData = JSON.parse(event.data);
+                renderTradingMode(globalData);
                 document.getElementById('last-update').innerText = `Synced: ${globalData.timestamp}`;
                 if (globalData.current_price) {
                     currentLivePrice = globalData.current_price;

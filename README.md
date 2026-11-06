@@ -112,23 +112,30 @@ are in memory and are not a durable market-data store.
 ### Trading modes and controls
 
 - **Default/data-only:** `LIVE_TRADING_ENABLED` is false and the displayed
-  status starts at `DATA ONLY`. The Start control does not enable trading.
-  The AI decision audit still calculates and displays strategy scores from
-  market data; automated trade management is disabled, and `/api/execute-trade`
-  returns HTTP 403.
-- **Live-capable run:** Start the process with `--enable-live-trading`. The
-  already installed and logged-in MT5 terminal must permit Python/API trading.
-  The dashboard must also be set to Start before manual order dispatch or
-  automated trading can proceed.
+  status starts at `DATA ONLY`; manual order buttons are disabled and
+  `/api/execute-trade` returns HTTP 403. The AI decision audit still calculates
+  and displays strategy scores from market data.
+- **Manual live run:** Start with `--enable-live-trading` (or use
+  `start_manual_trading.bat` and type `LIVE` at its prompt). The installed,
+  logged-in MT5 terminal must permit Python/API trading. The dashboard starts
+  ready for manual orders; each button click asks for a lot volume and a final
+  browser confirmation before submitting a real order. The server independently
+  rechecks the MT5 quote, open positions, available margin, symbol volume rules,
+  stop/target direction, and configured monetary risk limits.
+- **Automated entries:** Off by default, including in manual live mode. They
+  require the additional `--enable-auto-trading` flag together with
+  `--enable-live-trading`. Do not use this flag for manual-only trading.
+- **Position management:** In a live run, existing break-even/trailing and
+  early-exit rules may modify positions for the configured symbol and magic
+  number `123456`; they do not manage unrelated MT5 positions.
 - **Paused/stopped:** Dashboard controls update the in-memory engine status.
   These states are not persisted across restarts.
 
-The engine only opens a new position when the account has no open positions.
+The engine only submits a new position when the account has no open positions.
 Automated entries use 0.50 lots and fixed stop/target distances of 15/30 price
 units, but are rejected if broker symbol constraints, margin, or calculated
 loss at the stop exceed configured limits. Management and early-exit rules are
-translated from `DashboardBridge.mq5`; they only manage positions on the
-configured symbol with magic number `123456`.
+translated from `DashboardBridge.mq5`.
 
 ### Important behavior and known limitations
 
@@ -147,8 +154,9 @@ configured symbol with magic number `123456`.
   response. An order is only reported successful after MT5 accepts it; this
   does not guarantee a later fill.
 - Live trading stays disabled unless the process is explicitly started with
-  `--enable-live-trading` and the dashboard Start control is selected. Enabling
-  Algo Trading in MT5 alone does not enable this application's order path.
+  `--enable-live-trading`. Strategy-generated entries additionally require
+  `--enable-auto-trading`; enabling Algo Trading in MT5 alone does not enable
+  this application's order path.
 - The tracker expects closed-trade fields such as entry time,
   exit, P&L, result, and balance. The trade-log page contains example/static
   initial KPI values (including a max-drawdown value that is not calculated).
@@ -197,7 +205,8 @@ permission separately.
 - Real deal history is queried directly from the terminal. The engine does not
   invent historical RSI, trend, exit prices, or trade outcomes.
 - Live order placement and position management remain gated by the explicit
-  `--enable-live-trading` process option and dashboard Start control.
+  `--enable-live-trading` process option. Strategy-generated entries have the
+  additional `--enable-auto-trading` gate.
 
 ## 4. Python installation and local setup (Windows)
 
@@ -290,6 +299,12 @@ keeps its own console open for logs; open the dashboard at
 press **Ctrl+C** there to stop the engine. This launcher does not enable live
 trading.
 
+For explicitly enabled, manually confirmed Buy/Sell orders, double-click
+`start_manual_trading.bat` and type `LIVE` at its confirmation prompt. This
+launches the dashboard at [http://localhost:8081](http://localhost:8081) with
+automated strategy entries still disabled. The live launcher does not place an
+order by itself.
+
 The MT5 Python integration still requires the installed terminal process.
 `mt5.initialize()` may open it when the engine starts; minimize the terminal
 window if you do not want it in the foreground. Data-only mode prevents order
@@ -313,17 +328,20 @@ $env:MAX_DAILY_LOSS_PERCENT = '2'
 .\.venv\Scripts\python.exe .\Enhanced_Derive_AI_Engine.py --enable-live-trading
 ```
 
-Live mode is opt-in for each process launch. Both risk settings accept numbers
+Live mode is opt-in for each process launch. It enables manually confirmed
+dashboard orders; automated strategy entries remain disabled unless
+`--enable-auto-trading` is also supplied. Both risk settings accept numbers
 greater than 0 and up to 100; values are percentages. Defaults are 1.0% per
 trade and 2.0% daily loss. Invalid settings prevent the module from starting.
 The daily-loss calculation is `max(0, -daily_pnl / daily_start_balance * 100)`;
 new orders are blocked when that value reaches the configured cap. Missing
 terminal/account data blocks orders.
 
-The dashboard must also be set to Start. The application calculates risk from
-the terminal's symbol contract and rejects any order whose stop-loss risk
-exceeds the configured percentage. This does not guarantee execution or remove
-market-gap/slippage risk.
+Each manual order requires a user-entered lot volume (default prompt: 0.50 lots)
+and a browser confirmation. The application calculates risk from the terminal's
+symbol contract and rejects any order whose stop-loss risk exceeds the
+configured percentage. This does not guarantee execution or remove market,
+liquidity, slippage, or gap risk.
 
 ### Tests and basic checks
 

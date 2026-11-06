@@ -3,36 +3,46 @@ import argparse
 import functools
 import json
 import math
+import re
 import threading
 import time
 import os
 import traceback
-from datetime import datetime, timedelta
+from datetime import datetime
 from datetime import timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
+from typing import Any, cast
 import pandas as pd
 import pandas_ta as ta
 import websocket
 from mt5_bridge import MT5Bridge
+from websockets.sync.server import serve
 
-try:
-    from websockets.sync.server import serve
-    import websockets
-except ImportError:
-    pass
+ta_indicators: Any = cast(Any, ta)
 
 DERIV_WS_URL = "wss://api.derivws.com/trading/v1/options/ws/public?app_id=1089"
-SYMBOL = "R_25"
+DERIV_SYMBOLS = {
+    "Volatility 10 Index": "R_10",
+    "Volatility 25 Index": "R_25",
+    "Volatility 50 Index": "R_50",
+    "Volatility 100 Index": "R_100",
+}
+DERIV_TO_MT5_SYMBOL = {code: name for name, code in DERIV_SYMBOLS.items()}
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 DASHBOARD_PORT = int(os.environ.get("DASHBOARD_PORT", "8080"))
 WEBSOCKET_PORT = 8765 if DASHBOARD_PORT == 8080 else DASHBOARD_PORT + 1
 MT5_SYMBOL = os.environ.get("MT5_SYMBOL", "Volatility 25 Index")
+if MT5_SYMBOL not in DERIV_SYMBOLS:
+    raise ValueError(f"MT5_SYMBOL must be one of: {', '.join(DERIV_SYMBOLS)}")
+DEFAULT_SYMBOL = MT5_SYMBOL
+MAX_OPEN_POSITIONS = 1
 MT5_MAGIC_NUMBER = 123456
 
 def load_percentage_setting(name, default):
     try:
-        value = float(os.environ.get(name, default))
+        configured_value = os.environ.get(name)
+        value = float(default if configured_value is None else configured_value)
     except ValueError as error:
         raise ValueError(f"{name} must be a number between 0 and 100.") from error
     if not math.isfinite(value) or value <= 0 or value > 100:
@@ -45,14 +55,17 @@ LIVE_TRADING_ENABLED = False
 AUTO_TRADING_ENABLED = False
 agent_status = "DATA ONLY"
 current_signal = "HOLD / SCANNING"
-current_price = 2785.007
+current_price = 0.0
+current_prices = {symbol: 0.0 for symbol in DERIV_SYMBOLS}
 state_lock = threading.Lock()
 connected_ui_clients = set()
 latest_state_payload = None
-mt5_bridge = MT5Bridge(symbol=MT5_SYMBOL)
+mt5_bridge = MT5Bridge(symbol=DEFAULT_SYMBOL, symbols=list(DERIV_SYMBOLS))
 mt5_state_lock = threading.Lock()
 latest_mt5_account = {}
 latest_mt5_status = mt5_bridge.status()
+last_auto_evaluated_candle_times: dict[str, str] = {}
+auto_trade_lock = threading.Lock()
 
 def check_daily_loss_limit(account_state):
     if not isinstance(account_state, dict):
@@ -91,11 +104,6 @@ def validate_requested_risk_percent(payload):
         )
     return risk_fraction, ""
 
-tf_caches = {
-    '3m': None, '5m': None, '15m': None, 
-    '30m': None, 'h1': None, 'h4': None, 'd1': None
-}
-
 TF_GRANULARITY = {
     '3m': 180,
     '5m': 300,
@@ -106,9 +114,19 @@ TF_GRANULARITY = {
     'd1': 86400
 }
 
+def create_timeframe_cache() -> dict[str, pd.DataFrame | None]:
+    return {timeframe: None for timeframe in TF_GRANULARITY}
+
+
+symbol_tf_caches = {
+    symbol: create_timeframe_cache() for symbol in DERIV_SYMBOLS
+}
+tf_caches = symbol_tf_caches[DEFAULT_SYMBOL]
+
+
 def calculate_cpr(df):
     if df is None or len(df) < 2:
-        return {"pivot": 2780.5, "bc": 2778.2, "tc": 2782.8, "r1": 2792.1, "s1": 2770.3, "r2": 2801.4, "s2": 2761.0, "r3": 2815.0, "s3": 2750.0, "is_virgin": True}
+        return {}
     
     prev_day = df.iloc[-2]
     high, low, close = float(prev_day['high']), float(prev_day['low']), float(prev_day['close'])
@@ -125,36 +143,44 @@ def calculate_cpr(df):
         "is_virgin": True
     }
 
-def get_true_previous_day_ohlc():
-    daily_df = tf_caches.get('d1')
+def get_true_previous_day_ohlc(symbol: str = DEFAULT_SYMBOL):
+    daily_df = symbol_tf_caches[symbol].get('d1')
     if daily_df is not None and len(daily_df) >= 2:
         prev_day = daily_df.iloc[-2]
         return float(prev_day['open']), float(prev_day['close'])
     elif daily_df is not None and len(daily_df) == 1:
         return float(daily_df.iloc[-1]['open']), float(daily_df.iloc[-1]['close'])
-    return current_price, current_price
+    symbol_price = current_prices.get(symbol, 0.0)
+    return symbol_price, symbol_price
 
-def process_dataframe(df):
+def process_dataframe(df, symbol: str = DEFAULT_SYMBOL):
     if df is None or len(df) < 5:
-        p_open, p_close = get_true_previous_day_ohlc()
-        base_time = int(time.time()) - (50 * 180)
-        fallback_candles = []
-        p = current_price
-        for i in range(50):
-            fallback_candles.append({
-                "time": base_time + (i * 180),
-                "open": round(p - 0.5, 3),
-                "high": round(p + 1.0, 3),
-                "low": round(p - 1.0, 3),
-                "close": round(p, 3),
-                "pattern": "Normal"
-            })
+        p_open, p_close = get_true_previous_day_ohlc(symbol)
+        p = current_prices.get(symbol, 0.0)
+        candles = []
+        if df is not None and not df.empty:
+            for idx, row in df.iterrows():
+                candle_time = row["time"] if "time" in row else idx
+                candles.append({
+                    "time": candle_time,
+                    "open": round(float(row["open"]), 3),
+                    "high": round(float(row["high"]), 3),
+                    "low": round(float(row["low"]), 3),
+                    "close": round(float(row["close"]), 3),
+                    "pattern": "Normal",
+                })
+            if p <= 0:
+                p = float(df.iloc[-1]["close"])
+        length = len(candles)
         return {
-            "trend": "FLAT", "ema20": current_price, "ema30": current_price, "ema100": current_price, "ema200": current_price,
-            "rsi": 50.0, "atr": 1.0, "adx": 20.0, "bullish_pressure": 50, "candles": fallback_candles,
-            "bb_upper": [current_price + 2] * 50, "bb_middle": [current_price] * 50, "bb_lower": [current_price - 2] * 50,
-            "ema20_history": [current_price] * 50, "rsi_history": [50.0] * 50, "stoch_k_history": [50.0] * 50,
-            "prev_day_open": p_open, "prev_day_close": p_close
+            "data_ready": False,
+            "trend": "FLAT", "ema20": p, "ema30": p, "ema100": p, "ema200": p,
+            "rsi": 50.0, "atr": 0.0, "adx": 0.0, "bullish_pressure": 50, "candles": candles,
+            "bb_upper": [p] * length, "bb_middle": [p] * length, "bb_lower": [p] * length,
+            "ema20_history": [p] * length, "ema30_history": [p] * length, "ema100_history": [p] * length,
+            "atr_history": [0.0] * length, "adx_history": [0.0] * length,
+            "rsi_history": [50.0] * length, "stoch_k_history": [50.0] * length,
+            "stoch_d_history": [50.0] * length, "prev_day_open": p_open, "prev_day_close": p_close
         }
     
     df = df.copy()
@@ -162,17 +188,17 @@ def process_dataframe(df):
     df = df[~df.index.duplicated(keep='last')]
     df = df.sort_index()
     
-    df['ema20'] = ta.ema(df['close'], length=20)
-    df['ema30'] = ta.ema(df['close'], length=30)
-    df['ema100'] = ta.ema(df['close'], length=100)
-    df['ema200'] = ta.ema(df['close'], length=200)
-    df['rsi'] = ta.rsi(df['close'], length=14)
-    df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
+    df['ema20'] = ta_indicators.ema(df['close'], length=20)
+    df['ema30'] = ta_indicators.ema(df['close'], length=30)
+    df['ema100'] = ta_indicators.ema(df['close'], length=100)
+    df['ema200'] = ta_indicators.ema(df['close'], length=200)
+    df['rsi'] = ta_indicators.rsi(df['close'], length=14)
+    df['atr'] = ta_indicators.atr(df['high'], df['low'], df['close'], length=14)
     
-    adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
+    adx_df = ta_indicators.adx(df['high'], df['low'], df['close'], length=14)
     df['adx'] = adx_df['ADX_14'] if adx_df is not None and not adx_df.empty else 20.0
 
-    bb = ta.bbands(df['close'], length=16, std=1.986)
+    bb = ta_indicators.bbands(df['close'], length=16, std=1.986)
     if bb is not None:
         df['bb_lower'] = bb.iloc[:, 0]
         df['bb_middle'] = bb.iloc[:, 1]
@@ -182,7 +208,7 @@ def process_dataframe(df):
         df['bb_middle'] = df['close']
         df['bb_upper'] = df['close']
 
-    stoch = ta.stoch(df['high'], df['low'], df['close'], k=14, d=3)
+    stoch = ta_indicators.stoch(df['high'], df['low'], df['close'], k=14, d=3)
     if stoch is not None:
         df['stoch_k'] = stoch.iloc[:, 0]
         df['stoch_d'] = stoch.iloc[:, 1]
@@ -197,11 +223,11 @@ def process_dataframe(df):
     ema100_val = round(float(latest['ema100'] if pd.notna(latest['ema100']) else close_val), 3)
     ema200_val = round(float(latest['ema200'] if pd.notna(latest['ema200']) else close_val), 3)
     rsi_val = round(float(latest['rsi'] if pd.notna(latest['rsi']) else 50), 1)
-    atr_val = round(float(latest['atr'] if pd.notna(latest['atr']) else 1.0), 3)
+    atr_val = round(float(latest['atr'] if pd.notna(latest['atr']) else 0.0), 3)
     adx_val = round(float(latest['adx'] if pd.notna(latest['adx']) else 20.0), 1)
     
     trend = "BULLISH" if ema30_val > ema100_val else "BEARISH"
-    prev_open, prev_close = get_true_previous_day_ohlc()
+    prev_open, prev_close = get_true_previous_day_ohlc(symbol)
 
     candles_list = []
     tail_df = df.tail(75)
@@ -229,12 +255,17 @@ def process_dataframe(df):
     pressure = int((bullish_count / len(candles_list)) * 100) if len(candles_list) > 0 else 50
 
     return {
+        "data_ready": len(df) >= 200,
         "trend": trend, "ema20": ema20_val, "ema30": ema30_val, "ema100": ema100_val, "ema200": ema200_val,
         "rsi": rsi_val, "atr": atr_val, "adx": adx_val, "bullish_pressure": pressure, "candles": candles_list,
         "bb_upper": [round(x, 3) for x in tail_df['bb_upper'].fillna(close_val).tolist()],
         "bb_middle": [round(x, 3) for x in tail_df['bb_middle'].fillna(close_val).tolist()],
         "bb_lower": [round(x, 3) for x in tail_df['bb_lower'].fillna(close_val).tolist()],
         "ema20_history": [round(x, 3) for x in tail_df['ema20'].fillna(close_val).tolist()],
+        "ema30_history": [round(x, 3) for x in tail_df['ema30'].fillna(close_val).tolist()],
+        "ema100_history": [round(x, 3) for x in tail_df['ema100'].fillna(close_val).tolist()],
+        "atr_history": [round(x, 3) for x in tail_df['atr'].fillna(1.0).tolist()],
+        "adx_history": [round(x, 1) for x in tail_df['adx'].fillna(20.0).tolist()],
         "rsi_history": [round(x, 1) for x in tail_df['rsi'].fillna(50).tolist()],
         "stoch_k_history": [round(x, 1) for x in tail_df['stoch_k'].fillna(50).tolist()],
         "stoch_d_history": [round(x, 1) for x in tail_df['stoch_d'].fillna(50).tolist()],
@@ -370,13 +401,14 @@ def evaluate_multi_path_strategy(tf_data, h1_data, current_price, cpr, all_timef
 
     return action, audit
 
-def check_and_auto_trigger_trade(agent_state):
+def check_and_auto_trigger_trade(agent_state, symbol: str = DEFAULT_SYMBOL):
     timeframes = agent_state.get("timeframes", {})
     tf_data = timeframes.get("5m", {})
     h1_data = timeframes.get("h1", {})
-    current_price = agent_state.get("current_price", 0.0)
+    market_price = agent_state.get("current_price", 0.0)
 
-    if current_price <= 0 or not tf_data or not h1_data:
+    if market_price <= 0 or not tf_data or not h1_data:
+        agent_state["signal"] = "HOLD / SCANNING"
         agent_state["decision_audit"] = {
             "regime": "SCANNING",
             "consensus_score": 0,
@@ -388,66 +420,162 @@ def check_and_auto_trigger_trade(agent_state):
     action, audit = evaluate_multi_path_strategy(
         tf_data,
         h1_data,
-        current_price,
+        market_price,
         agent_state.get("cpr", {}),
         timeframes,
     )
+    agent_state["signal"] = action or "HOLD / SCANNING"
     agent_state["decision_audit"] = audit
 
     if not LIVE_TRADING_ENABLED or not AUTO_TRADING_ENABLED or agent_status != "RUNNING":
         return
 
+    if not tf_data.get("data_ready") or not h1_data.get("data_ready"):
+        agent_state["decision_audit"]["reasoning"] += (
+            " | Auto trading waits for sufficient 5m and 1h history."
+        )
+        return
+
     mt5_account = agent_state.get("mt5_account", {})
-    risk_allowed, risk_message = check_daily_loss_limit(mt5_account)
-    if not risk_allowed:
-        agent_state["decision_audit"] = {
-            "regime": "RISK BLOCK",
-            "consensus_score": 0,
-            "active_paths": [],
-            "reasoning": risk_message
-        }
+    candles = tf_data.get("candles", [])
+    if len(candles) < 2:
+        agent_state["decision_audit"]["reasoning"] += (
+            " | Auto trading waits for a completed 5m candle."
+        )
         return
 
-    if not latest_mt5_status.get("trade_allowed"):
+    closed_timeframe = dict(tf_data)
+    closed_timeframe["candles"] = candles[:-1]
+    history_fields = (
+        "bb_upper", "bb_middle", "bb_lower", "ema20_history", "ema30_history",
+        "ema100_history", "atr_history", "adx_history", "rsi_history",
+        "stoch_k_history", "stoch_d_history",
+    )
+    for field in history_fields:
+        values = tf_data.get(field)
+        if not isinstance(values, list) or len(values) != len(candles):
+            agent_state["decision_audit"]["reasoning"] += (
+                " | Auto trading waits for complete closed-candle indicator history."
+            )
+            return
+        closed_timeframe[field] = values[:-1]
+
+    if not closed_timeframe["candles"]:
+        agent_state["decision_audit"]["reasoning"] += (
+            " | Auto trading waits for a completed 5m candle."
+        )
         return
 
-    if mt5_account.get("open_positions", 0) > 0 or len(mt5_account.get("positions", [])) > 0:
+    closed_indicators = {
+        "ema20": "ema20_history",
+        "atr": "atr_history",
+        "adx": "adx_history",
+        "rsi": "rsi_history",
+    }
+    for field, history in closed_indicators.items():
+        closed_timeframe[field] = closed_timeframe[history][-1]
+    closed_timeframe["ema30"] = closed_timeframe["ema30_history"][-1]
+    closed_timeframe["ema100"] = closed_timeframe["ema100_history"][-1]
+    closed_timeframe["trend"] = (
+        "BULLISH"
+        if closed_timeframe["ema30"] > closed_timeframe["ema100"]
+        else "BEARISH"
+    )
+    closed_price = float(closed_timeframe["candles"][-1]["close"])
+    closed_candle_time = closed_timeframe["candles"][-1].get("time")
+    if closed_candle_time is None:
+        agent_state["decision_audit"]["reasoning"] += (
+            " | Auto trading waits for the closed 5m candle timestamp."
+        )
         return
 
-    if action:
-        stop_buffer = 15.0  
-        take_profit_buffer = 30.0
+    closed_candle_time = str(closed_candle_time)
+    previous_candle_time = last_auto_evaluated_candle_times.get(symbol)
+    if previous_candle_time is None:
+        last_auto_evaluated_candle_times[symbol] = closed_candle_time
+        agent_state["decision_audit"]["reasoning"] += (
+            " | Auto trading armed; waiting for the next completed 5m candle."
+        )
+        return
+    if closed_candle_time == previous_candle_time:
+        return
+    last_auto_evaluated_candle_times[symbol] = closed_candle_time
 
-        if action == "BUY":
-            sl = current_price - stop_buffer
-            tp = current_price + take_profit_buffer
-        else: 
-            sl = current_price + stop_buffer
-            tp = current_price - take_profit_buffer
+    decision_timeframes = dict(timeframes)
+    decision_timeframes["5m"] = closed_timeframe
+    action, audit = evaluate_multi_path_strategy(
+        closed_timeframe,
+        h1_data,
+        closed_price,
+        agent_state.get("cpr", {}),
+        decision_timeframes,
+    )
+    agent_state["decision_audit"] = audit
+    if not action:
+        return
 
-        payload = {
-            "symbol": MT5_SYMBOL,
-            "action": action,
-            "volume": 0.50,
-            "entry": round(current_price, 4),
-            "tp": round(tp, 4),
-            "sl": round(sl, 4),
-            "strategy_path": f"Confluence Consensus Score: {audit['consensus_score']}"
-        }
+    atr = float(closed_timeframe["atr"])
+    if not math.isfinite(atr) or atr <= 0:
+        agent_state["decision_audit"]["reasoning"] += (
+            " | Auto trade skipped: closed-candle ATR is unavailable."
+        )
+        return
+
+    payload = {
+        "symbol": symbol,
+        "action": action,
+        "risk_sized": True,
+        "sl_distance": atr * 1.5,
+        "tp_distance": atr * 3.0,
+        "strategy_path": f"Confluence Consensus Score: {audit['consensus_score']}"
+    }
+
+    with auto_trade_lock:
+        account_state, bridge_status = mt5_bridge.account_snapshot()
+        if account_state is None:
+            message = bridge_status.get("detail", "MT5 account state is unavailable.")
+            agent_state["decision_audit"]["reasoning"] += f" | Auto trade blocked: {message}"
+            return
+        with mt5_state_lock:
+            latest_mt5_account.update(account_state)
+            latest_mt5_status.update(bridge_status)
+
+        risk_allowed, risk_message = check_daily_loss_limit(account_state)
+        if not risk_allowed:
+            agent_state["decision_audit"]["reasoning"] += (
+                f" | Auto trade blocked: {risk_message}"
+            )
+            return
+        positions = account_state.get("positions", [])
+        if len(positions) >= MAX_OPEN_POSITIONS:
+            agent_state["decision_audit"]["reasoning"] += (
+                f" | Auto trade blocked: portfolio limit is {MAX_OPEN_POSITIONS} open position."
+            )
+            return
+        if not bridge_status.get("trade_allowed"):
+            agent_state["decision_audit"]["reasoning"] += (
+                " | Auto trade blocked: MT5 trading permission is unavailable."
+            )
+            return
+        symbol_market = account_state.get("symbols", {}).get(symbol, {})
+        if not symbol_market.get("available"):
+            message = symbol_market.get("detail", f"MT5 symbol {symbol} is unavailable.")
+            agent_state["decision_audit"]["reasoning"] += f" | Auto trade blocked: {message}"
+            return
 
         succeeded, message, result = mt5_bridge.place_market_order(
             payload, MAX_RISK_PER_TRADE_PERCENT
         )
-        agent_state["decision_audit"]["reasoning"] += (
-            f" | MT5 {message}" if succeeded else f" | Order rejected: {message}"
+    agent_state["decision_audit"]["reasoning"] += (
+        f" | MT5 {message}" if succeeded else f" | Order rejected: {message}"
+    )
+    if succeeded:
+        print(
+            f"[AUTONOMOUS CONSENSUS] {action} {result.get('volume')} lots "
+            f"on {symbol}; order={result.get('order')}"
         )
-        if succeeded:
-            print(
-                f"[AUTONOMOUS CONSENSUS] {action} {payload['volume']} lots "
-                f"on {MT5_SYMBOL}; order={result.get('order')}"
-            )
-        else:
-            print(f"ERROR: MT5 rejected autonomous {action}: {message}")
+    else:
+        print(f"ERROR: MT5 rejected autonomous {action} on {symbol}: {message}")
 
 def manage_active_trades(agent_state):
     if not LIVE_TRADING_ENABLED or not latest_mt5_status.get("trade_allowed"):
@@ -455,19 +583,21 @@ def manage_active_trades(agent_state):
 
     mt5_account = agent_state.get("mt5_account", {})
     positions = mt5_account.get("positions", [])
-    tf_data = agent_state.get("timeframes", {}).get("5m", {})
-    atr = float(tf_data.get("atr", 0.0))
-    ema20 = float(tf_data.get("ema20", 0.0))
-    if not positions or not math.isfinite(atr) or atr <= 0:
+    if not positions:
         return
 
     import MetaTrader5 as mt5
 
     for pos in positions:
-        if (
-            pos.get("symbol") != MT5_SYMBOL
-            or int(pos.get("magic", 0)) != MT5_MAGIC_NUMBER
-        ):
+        symbol = pos.get("symbol")
+        if symbol not in DERIV_SYMBOLS or int(pos.get("magic", 0)) != MT5_MAGIC_NUMBER:
+            continue
+
+        symbol_state = agent_state.get("symbols", {}).get(symbol, {})
+        tf_data = symbol_state.get("timeframes", {}).get("5m", {})
+        atr = float(tf_data.get("atr", 0.0))
+        ema20 = float(tf_data.get("ema20", 0.0))
+        if not math.isfinite(atr) or atr <= 0:
             continue
 
         ticket = int(pos["ticket"])
@@ -475,7 +605,8 @@ def manage_active_trades(agent_state):
         entry_price = float(pos["price"])
         current_sl = float(pos["sl"])
         current_tp = float(pos["tp"])
-        tick = mt5.symbol_info_tick(MT5_SYMBOL)
+        symbol_info_tick = getattr(mt5, "symbol_info_tick")
+        tick = symbol_info_tick(symbol)
         if tick is None:
             continue
 
@@ -557,47 +688,54 @@ def broadcast_state_update():
     """Build the latest engine snapshot and publish it to connected clients."""
     global latest_state_payload
     with state_lock:
-        timeframes_dict = {}
-        for tf, df in tf_caches.items():
-            if df is not None and not df.empty:
-                timeframes_dict[tf] = process_dataframe(df)
-            else:
-                timeframes_dict[tf] = process_dataframe(None)
-
-        daily_df = tf_caches.get('d1')
-        cpr_dict = calculate_cpr(daily_df)
-
         with mt5_state_lock:
             mt5_account_data = dict(latest_mt5_account)
             mt5_status = dict(latest_mt5_status)
 
+        symbol_states = {}
+        for symbol, caches in symbol_tf_caches.items():
+            timeframes_dict = {}
+            for timeframe, df in caches.items():
+                timeframes_dict[timeframe] = process_dataframe(df, symbol)
+            daily_df = caches.get("d1")
+            symbol_states[symbol] = {
+                "symbol": symbol,
+                "deriv_symbol": DERIV_SYMBOLS[symbol],
+                "current_price": current_prices[symbol],
+                "signal": "HOLD / SCANNING",
+                "cpr": calculate_cpr(daily_df),
+                "timeframes": timeframes_dict,
+                "decision_audit": {
+                    "regime": "SCANNING",
+                    "consensus_score": 0,
+                    "active_paths": [],
+                    "reasoning": "Waiting for market data."
+                },
+                "mt5_symbol": mt5_account_data.get("symbols", {}).get(symbol, {}),
+            }
+
         state_data = {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "agent_status": agent_status,
-            "current_price": current_price,
-            "signal": current_signal,
-            "cpr": cpr_dict,
-            "timeframes": timeframes_dict,
+            "default_symbol": DEFAULT_SYMBOL,
+            "supported_symbols": list(DERIV_SYMBOLS),
+            "symbols": symbol_states,
             "mt5_account": mt5_account_data,
             "mt5_bridge": mt5_status,
             "live_trading_enabled": LIVE_TRADING_ENABLED,
             "auto_trading_enabled": AUTO_TRADING_ENABLED,
             "max_risk_per_trade_percent": MAX_RISK_PER_TRADE_PERCENT,
-            "vix25_specs": {
-                "min_lot": 0.50,
-                "max_lot": 200.00,
-                "margin_per_min_lot": 0.35
-            },
-            "decision_audit": {
-                "regime": "SCANNING",
-                "consensus_score": 0,
-                "active_paths": [],
-                "reasoning": "Initializing decision matrix..."
-            }
+            "max_open_positions": MAX_OPEN_POSITIONS,
         }
 
         manage_active_trades(state_data)
-        check_and_auto_trigger_trade(state_data)
+        for symbol, symbol_state in symbol_states.items():
+            symbol_state["mt5_account"] = mt5_account_data
+            check_and_auto_trigger_trade(symbol_state, symbol)
+
+        default_state = symbol_states[DEFAULT_SYMBOL]
+        for field in ("current_price", "signal", "cpr", "timeframes", "decision_audit"):
+            state_data[field] = default_state[field]
 
         payload_str = json.dumps(state_data)
         latest_state_payload = payload_str
@@ -617,7 +755,7 @@ def broadcast_state_update():
             connected_ui_clients.difference_update(disconnected)
 
 def on_message(ws, message):
-    global current_price, tf_caches
+    global current_price, current_prices, tf_caches
     try:
         data = json.loads(message)
         msg_type = data.get("msg_type")
@@ -625,12 +763,22 @@ def on_message(ws, message):
         if msg_type == "tick":
             tick = data.get("tick")
             if tick and "quote" in tick and "epoch" in tick:
-                current_price = float(tick["quote"])
+                symbol_code = tick.get("symbol")
+                if symbol_code is None:
+                    symbol_code = data.get("echo_req", {}).get("ticks")
+                symbol = DERIV_TO_MT5_SYMBOL.get(str(symbol_code))
+                if symbol is None:
+                    return
+                current_prices[symbol] = float(tick["quote"])
+                symbol_price = current_prices[symbol]
+                if symbol == DEFAULT_SYMBOL:
+                    current_price = symbol_price
                 tick_epoch = int(tick["epoch"])
                 
                 with state_lock:
                     for tf, gran in TF_GRANULARITY.items():
-                        df = tf_caches.get(tf)
+                        caches = symbol_tf_caches[symbol]
+                        df = caches.get(tf)
                         if df is not None and not df.empty:
                             # Calculate the official time bucket start for this tick
                             bucket_epoch = (tick_epoch // gran) * gran
@@ -642,25 +790,25 @@ def on_message(ws, message):
                                 # 🚀 Countdown finished: A new candle period has started! Append a new row.
                                 new_row = pd.DataFrame([{
                                     "time": bucket_epoch,
-                                    "open": current_price,
-                                    "high": current_price,
-                                    "low": current_price,
-                                    "close": current_price
+                                    "open": symbol_price,
+                                    "high": symbol_price,
+                                    "low": symbol_price,
+                                    "close": symbol_price
                                 }], index=pd.DatetimeIndex([bucket_dt]))
                                 
                                 # Append and keep the dataframe trimmed to the last 300 rows
                                 df = pd.concat([df, new_row])
-                                tf_caches[tf] = df.iloc[-300:]
+                                caches[tf] = df.iloc[-300:]
                             else:
                                 # 🔄 Still within the current candle period: update High, Low, and Close
-                                high_val = float(df.loc[last_idx, 'high'])
-                                low_val = float(df.loc[last_idx, 'low'])
+                                high_val = float(cast(Any, df.at[last_idx, 'high']))
+                                low_val = float(cast(Any, df.at[last_idx, 'low']))
                                 
-                                df.loc[last_idx, 'close'] = current_price
-                                if current_price > high_val:
-                                    df.loc[last_idx, 'high'] = current_price
-                                if current_price < low_val:
-                                    df.loc[last_idx, 'low'] = current_price
+                                df.at[last_idx, 'close'] = symbol_price
+                                if symbol_price > high_val:
+                                    df.at[last_idx, 'high'] = symbol_price
+                                if symbol_price < low_val:
+                                    df.at[last_idx, 'low'] = symbol_price
                                     
                 broadcast_state_update()
                 
@@ -668,10 +816,11 @@ def on_message(ws, message):
             candles = data.get("candles", [])
             echo = data.get("echo_req", {})
             granularity = echo.get("granularity")
-            
+            symbol_code = echo.get("ticks_history")
+            symbol = DERIV_TO_MT5_SYMBOL.get(str(symbol_code))
             target_tf = next((tf for tf, gran in TF_GRANULARITY.items() if gran == granularity), None)
                     
-            if candles and target_tf:
+            if candles and target_tf and symbol:
                 rows = []
                 timestamps = []
                 for c in candles:
@@ -688,7 +837,7 @@ def on_message(ws, message):
                 with state_lock:
                     temp_df = pd.DataFrame(rows, index=pd.DatetimeIndex(timestamps))
                     temp_df = temp_df[~temp_df.index.duplicated(keep='last')].sort_index()
-                    tf_caches[target_tf] = temp_df
+                    symbol_tf_caches[symbol][target_tf] = temp_df
                 broadcast_state_update()
     except Exception as e:
         print(f"ERROR: on_message: {e}")
@@ -704,20 +853,21 @@ def on_open(ws):
     active_deriv_ws = ws
     print("Connected successfully to Deriv Options Public WebSocket API!")
     
-    for tf, gran in TF_GRANULARITY.items():
-        history_req = {
-            "ticks_history": SYMBOL,
-            "adjust_start_time": 1,
-            "count": 300,
-            "end": "latest",
-            "granularity": gran,
-            "style": "candles"
-        }
-        ws.send(json.dumps(history_req))
+    for symbol_code in DERIV_SYMBOLS.values():
+        for granularity in TF_GRANULARITY.values():
+            history_req = {
+                "ticks_history": symbol_code,
+                "adjust_start_time": 1,
+                "count": 300,
+                "end": "latest",
+                "granularity": granularity,
+                "style": "candles"
+            }
+            ws.send(json.dumps(history_req))
+            time.sleep(0.1)
+
+        ws.send(json.dumps({"ticks": symbol_code, "subscribe": 1}))
         time.sleep(0.1)
-        
-    tick_req = {"ticks": SYMBOL, "subscribe": 1}
-    ws.send(json.dumps(tick_req))
 
 def on_close(ws, close_status_code, close_msg):
     global active_deriv_ws
@@ -788,21 +938,42 @@ class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
         elif path == '/agent_state.json':
             payload = latest_state_payload
             if payload is None:
+                empty_audit = {
+                    "regime": "SCANNING",
+                    "consensus_score": 0,
+                    "active_paths": [],
+                    "reasoning": "Waiting for market data."
+                }
+                empty_symbols = {
+                    symbol: {
+                        "symbol": symbol,
+                        "deriv_symbol": deriv_symbol,
+                        "current_price": 0.0,
+                        "signal": "HOLD / SCANNING",
+                        "cpr": {},
+                        "timeframes": {},
+                        "decision_audit": empty_audit,
+                        "mt5_symbol": {},
+                    }
+                    for symbol, deriv_symbol in DERIV_SYMBOLS.items()
+                }
                 payload = json.dumps({
                     "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "agent_status": agent_status,
-                    "current_price": None,
+                    "default_symbol": DEFAULT_SYMBOL,
+                    "supported_symbols": list(DERIV_SYMBOLS),
+                    "symbols": empty_symbols,
+                    "current_price": 0.0,
                     "signal": current_signal,
                     "mt5_account": {},
                     "mt5_bridge": latest_mt5_status,
                     "timeframes": {},
                     "cpr": {},
-                    "decision_audit": {
-                        "regime": "SCANNING",
-                        "consensus_score": 0,
-                        "active_paths": [],
-                        "reasoning": "Waiting for market data."
-                    }
+                    "decision_audit": empty_audit,
+                    "live_trading_enabled": LIVE_TRADING_ENABLED,
+                    "auto_trading_enabled": AUTO_TRADING_ENABLED,
+                    "max_risk_per_trade_percent": MAX_RISK_PER_TRADE_PERCENT,
+                    "max_open_positions": MAX_OPEN_POSITIONS,
                 })
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
@@ -884,7 +1055,7 @@ class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
                 return
 
             risk_percent, risk_error = validate_requested_risk_percent(payload)
-            if risk_error:
+            if risk_error or risk_percent is None:
                 self._send_json(403, {"status": "REJECTED", "message": risk_error})
                 return
 
@@ -892,6 +1063,12 @@ class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
             with mt5_state_lock:
                 latest_mt5_account = account_state or {}
                 latest_mt5_status = bridge_status
+            if account_state is None:
+                self._send_json(503, {
+                    "status": "REJECTED",
+                    "message": bridge_status.get("detail", "MT5 account state is unavailable.")
+                })
+                return
             risk_allowed, risk_message = check_daily_loss_limit(account_state)
             if not risk_allowed:
                 self._send_json(503, {
@@ -970,8 +1147,9 @@ def run_websocket_server():
             "127.0.0.1",
             WEBSOCKET_PORT,
             origins=[
-                f"http://localhost:{DASHBOARD_PORT}",
-                f"http://127.0.0.1:{DASHBOARD_PORT}"
+                re.compile(
+                    rf"^http://(?:localhost|127\.0\.0\.1):{DASHBOARD_PORT}$"
+                )
             ]
         ) as server:
             server.serve_forever()

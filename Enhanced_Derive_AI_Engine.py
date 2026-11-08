@@ -409,7 +409,7 @@ def evaluate_multi_path_strategy(
     profile=CURRENT_PROFILE,
     include_sub_5m_confluence=True,
 ):
-    """Unified style-aware and multi-path strategy evaluator incorporating dynamic regime multipliers & time-of-day weighting."""
+    """Unified style-aware and multi-path strategy evaluator incorporating dynamic regime multipliers, time-of-day weighting, and Path I Market Open Bias."""
     atr = tf_data.get("atr", 1.0)
     adx = tf_data.get("adx", 20.0)
     rsi = tf_data.get("rsi", 50.0)
@@ -425,7 +425,7 @@ def evaluate_multi_path_strategy(
     total_score = 0
     active_paths = []
 
-    # Enhancement 2: Time-of-Day / Session Volatility Weighting Factor (UTC hours 08:00 - 18:00 high liquidity)
+    # Enhancement 2: Time-of-Day / Session Volatility Weighting Factor
     utc_hour = datetime.now(timezone.utc).hour
     is_high_liquidity_session = 7 <= utc_hour <= 19
     session_weight = 1.15 if is_high_liquidity_session else 0.85
@@ -466,7 +466,7 @@ def evaluate_multi_path_strategy(
                 active_paths.append("Swing Below Daily CPR Pivot")
 
     else:
-        # INTRADAY / COMPREHENSIVE 8-PATH EVALUATOR ROUTER
+        # INTRADAY / COMPREHENSIVE PATH EVALUATOR ROUTER
         if adx > 22.0 and not is_squeeze:
             regime = "STRATEGY_1_MTF_TREND_MOMENTUM"
             if higher_trend == "BULLISH" and current_price > ema20 and 45 < rsi < 65 and stoch_k < 30:
@@ -542,7 +542,7 @@ def evaluate_multi_path_strategy(
                     total_score -= 25
                     active_paths.append("Path G (Bearish Pinbar)")
 
-    # Path F: Fair Value Gap (FVG) Retest (Supplementary Confluence)
+    # Path F: Fair Value Gap (FVG) Retest
     if len(tf_data.get("candles", [])) >= 3:
         c_prev2 = tf_data["candles"][-3]
         c_prev1 = tf_data["candles"][-2]
@@ -557,6 +557,23 @@ def evaluate_multi_path_strategy(
             if abs(current_price - fvg_mid) <= (atr * 0.4) and current_price <= fvg_mid:
                 total_score -= 20
                 active_paths.append("Path F (Bearish FVG Retest)")
+
+    # Path I: Market Open 15-Minute Candle Bias
+    if all_timeframes and '15m' in all_timeframes:
+        tf_15m = all_timeframes['15m']
+        candles_15m = tf_15m.get("candles", [])
+        if len(candles_15m) >= 2:
+            session_open_candle = candles_15m[0]
+            latest_15m = candles_15m[-1]
+            open_price = session_open_candle['open']
+            close_15m = latest_15m['close']
+            
+            if close_15m > open_price and current_price >= open_price:
+                total_score += 30
+                active_paths.append("Path I (Market Open 15m Bullish Bias)")
+            elif close_15m < open_price and current_price <= open_price:
+                total_score -= 30
+                active_paths.append("Path I (Market Open 15m Bearish Bias)")
 
     # Apply Session Weighting
     total_score = int(round(total_score * session_weight))
@@ -1009,7 +1026,6 @@ def broadcast_state_update():
 
         manage_active_trades(state_data)
 
-        # Phase 1: Evaluate signals for all supported symbols & collect candidates
         symbol_candidates = []
         profile = CURRENT_PROFILE
         primary_tf = profile["primary_tf"]
@@ -1102,7 +1118,6 @@ def broadcast_state_update():
                     "reasoning": f"Waiting for {primary_tf} and {confluence_tf} market data."
                 }
 
-        # Phase 2: Select the single best trade opportunity across all 4 symbols with alignment filtering
         if LIVE_TRADING_ENABLED and AUTO_TRADING_ENABLED and agent_status == "RUNNING" and symbol_candidates:
             with auto_trade_lock:
                 account_state, bridge_status = mt5_bridge.account_snapshot()

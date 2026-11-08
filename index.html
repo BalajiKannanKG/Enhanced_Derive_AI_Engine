@@ -18,6 +18,10 @@
             <span id="livePriceDisplay" class="live-price-tag">MT5 · Symbol: ---</span>
         </h1>
         <div class="header-actions">
+            <!-- Global Portfolio Lock & Spread Guard Status Badges -->
+            <div id="portfolio-lock-badge" class="badge badge-normal" title="Global Portfolio Position Lock across all symbols">Portfolio Lock: Active (0 / 1 Pos)</div>
+            <div id="spread-guard-badge" class="badge badge-success" title="Dynamic Spread & Slippage Guard Status">Spread Guard: Optimal</div>
+            
             <label for="symbol-selector" class="badge">Symbol</label>
             <select id="symbol-selector" class="symbol-select" onchange="selectTradingSymbol(this.value)">
                 <option>Loading symbols...</option>
@@ -185,8 +189,8 @@
                 <h3>🎯 Strategy Audit & Reasoning</h3>
                 <div class="metric-row"><span>Market Regime:</span> <span class="metric-value" id="audit-regime" style="color:var(--accent-cyan);">---</span></div>
                 <div class="metric-row"><span>Consensus Score:</span> <span class="metric-value" id="audit-score">0</span></div>
-                <div style="font-size: 0.6rem; color: var(--text-muted); margin-top: 3px;">Active Paths:</div>
-                <div id="audit-paths" style="font-size: 0.62rem; font-weight: bold; color: var(--accent-yellow); min-height: 18px; margin-bottom: 2px;">Scanning active paths...</div>
+                <div style="font-size: 0.6rem; color: var(--text-muted); margin-top: 3px;">Active Paths & Trap Fades:</div>
+                <div id="audit-paths" class="pill-container" style="font-size: 0.62rem; font-weight: bold; color: var(--accent-yellow); min-height: 18px; margin-bottom: 2px;">Scanning active paths...</div>
                 <div style="font-size: 0.58rem; color: var(--text-muted);">Reasoning:</div>
                 <div id="audit-reasoning" style="font-size: 0.6rem; background: rgba(0,0,0,0.03); border: 1px solid var(--border-color); padding: 3px; border-radius: 3px; max-height: 35px; overflow-y: auto;">Initializing decision matrix...</div>
             </div>
@@ -437,28 +441,10 @@
                 breakoutAlertEl.className = '';
             }
 
-            // Retest Confluence Evaluation
             const distanceToEMA = Math.abs(price - ema20);
             const isNearKeyLevel = distanceToEMA <= (atr * 0.6);
             const isBuyRetest = isNearKeyLevel && price >= ema20;
             const isSellRetest = isNearKeyLevel && price <= ema20;
-
-            const bannerEl = document.getElementById('retest-status-banner');
-            if (bannerEl) {
-                if (isBuyRetest) {
-                    bannerEl.innerText = "🟢 BULLISH RETEST CONFIRMED AT KEY LEVEL";
-                    bannerEl.style.color = "var(--accent-green)";
-                    bannerEl.style.borderColor = "var(--accent-green)";
-                } else if (isSellRetest) {
-                    bannerEl.innerText = "🔴 BEARISH RETEST CONFIRMED AT KEY LEVEL";
-                    bannerEl.style.color = "var(--accent-red)";
-                    bannerEl.style.borderColor = "var(--accent-red)";
-                } else {
-                    bannerEl.innerText = "🔍 Waiting for Price Pullback & Retest...";
-                    bannerEl.style.color = "var(--accent-cyan)";
-                    bannerEl.style.borderColor = "var(--accent-cyan)";
-                }
-            }
 
             const buyBB = price <= (bbLower + (atr * 0.3));
             const buyStoch = stochK <= 25;
@@ -486,7 +472,6 @@
             updateLight('c-sell-sq', sellSqueeze);
             updateLight('c-sell-retest', isSellRetest);
 
-            // Unified Total Confluence Score (out of 6 checks)
             const buyScore = [buyBB, buyStoch, buyEMA, buySR, buySqueeze, isBuyRetest].filter(Boolean).length;
             const sellScore = [sellBB, sellStoch, sellEMA, sellSR, sellSqueeze, isSellRetest].filter(Boolean).length;
 
@@ -560,7 +545,6 @@
             }
         });
 
-        // Multi-tranche dispatcher respecting 200 lots max per trade and up to 1000 lots total
         async function dispatchTradeInTranches(actionType, totalVolume, entry, tp, sl) {
             const maxPerTrade = 200.00;
             let remainingVolume = totalVolume;
@@ -572,7 +556,7 @@
 
             while (remainingVolume > 0) {
                 let currentTrancheVol = Math.min(maxPerTrade, remainingVolume);
-                currentTrancheVol = Math.round(currentTrancheVol * 2) / 2; // Snap to 0.5 step
+                currentTrancheVol = Math.round(currentTrancheVol * 2) / 2;
 
                 btn.innerText = `⏳ DISPATCHING TRANCHE ${trancheCount} (${currentTrancheVol} Lots)...`;
 
@@ -825,6 +809,20 @@
             if (capitalInput && !window.userManuallyChangedCapital && balance > 0) {
                 capitalInput.value = balance.toFixed(2);
             }
+
+            // --- Updated Portfolio Lock Badge Update ---
+            const openPositionsList = account.positions || [];
+            const maxPosLimit = data.max_open_positions || 1;
+            const portfolioBadge = document.getElementById('portfolio-lock-badge');
+            if (portfolioBadge) {
+                if (openPositionsList.length >= maxPosLimit) {
+                    portfolioBadge.textContent = `Portfolio Lock: MAX (${openPositionsList.length}/${maxPosLimit})`;
+                    portfolioBadge.className = 'badge badge-warning';
+                } else {
+                    portfolioBadge.textContent = `Portfolio Lock: Ready (${openPositionsList.length}/${maxPosLimit})`;
+                    portfolioBadge.className = 'badge badge-success';
+                }
+            }
         }
 
         function renderTradingMode(data) {
@@ -876,7 +874,6 @@
 
         function renderDashboardState(data) {
             try {
-                // Sanitize incoming candle series for all timeframes
                 if (data.timeframes) {
                     Object.keys(data.timeframes).forEach(tf => {
                         if (data.timeframes[tf] && data.timeframes[tf].candles) {
@@ -970,8 +967,19 @@
                     scoreEl.innerText = score;
                     scoreEl.style.color = score >= 65 ? 'var(--accent-green)' : (score <= -65 ? 'var(--accent-red)' : 'var(--accent-yellow)');
                     
-                    const pathsEl = document.getElementById('audit-paths');
-                    pathsEl.innerText = (audit.active_paths && audit.active_paths.length > 0) ? audit.active_paths.join(' | ') : 'None active (HOLD)';
+                    // --- Updated Strategy Pill Render for Path I & Trap Fades ---
+                    const pathsContainer = document.getElementById('audit-paths');
+                    pathsContainer.innerHTML = '';
+                    if (audit.active_paths && audit.active_paths.length > 0) {
+                        audit.active_paths.forEach(path => {
+                            const pill = document.createElement('span');
+                            pill.className = 'strategy-pill';
+                            pill.textContent = path;
+                            pathsContainer.appendChild(pill);
+                        });
+                    } else {
+                        pathsContainer.innerHTML = '<span style="color:var(--text-muted);">None active (HOLD)</span>';
+                    }
                     
                     document.getElementById('audit-reasoning').innerText = audit.reasoning || "Analyzing market conditions...";
                 }
@@ -1731,7 +1739,6 @@
             };
         }
 
-        // Initialize WebSocket Push & Candle Countdowns
         fetchDashboardData();
         setInterval(() => {
             if (!uiWebSocketConnected) fetchDashboardData();

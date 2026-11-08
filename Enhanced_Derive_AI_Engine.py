@@ -1,4 +1,4 @@
-# Enhanced_Derive_AI_Engine.py - Complete Unabridged Autonomous Quantitative Trading Engine
+# Enhanced_Derive_AI_Engine.py - Complete Unabridged Autonomous Quantitative Trading Engine (Institutional Upgraded Edition)
 import argparse
 import functools
 import json
@@ -47,7 +47,9 @@ TRADING_PROFILES = {
         "tp_atr_mult": 1.5,
         "stagnation_seconds": 90,
         "min_consensus_score": 45,
-        "partial_scale_out_atr": 1.5
+        "min_adx": 22.0,
+        "partial_scale_out_atr": 1.5,
+        "break_even_trigger_r": 1.0
     },
     "INTRADAY": {
         "primary_tf": "5m",
@@ -56,7 +58,9 @@ TRADING_PROFILES = {
         "tp_atr_mult": 3.0,
         "stagnation_seconds": 180,
         "min_consensus_score": 55,
-        "partial_scale_out_atr": 2.0
+        "min_adx": 25.0,
+        "partial_scale_out_atr": 2.0,
+        "break_even_trigger_r": 1.0
     },
     "SWING": {
         "primary_tf": "h1",
@@ -65,7 +69,9 @@ TRADING_PROFILES = {
         "tp_atr_mult": 6.0,
         "stagnation_seconds": 3600,
         "min_consensus_score": 65,
-        "partial_scale_out_atr": 3.0
+        "min_adx": 28.0,
+        "partial_scale_out_atr": 3.0,
+        "break_even_trigger_r": 1.2
     }
 }
 
@@ -237,6 +243,17 @@ MT5_TIMEFRAMES = {
     'd1': 'TIMEFRAME_D1',
 }
 
+def validate_trade_quality(adx_val: float, consensus_score: int) -> tuple[bool, str]:
+    """Validates trade quality via ADX trend strength and minimum consensus score."""
+    min_adx = CURRENT_PROFILE.get("min_adx", 25.0)
+    min_score = CURRENT_PROFILE.get("min_consensus_score", 55)
+
+    if adx_val < min_adx:
+        return False, f"Trade Rejected: ADX ({adx_val:.1f}) is below the required trend strength threshold ({min_adx})."
+    if abs(consensus_score) < min_score:
+        return False, f"Trade Rejected: Consensus score ({consensus_score}) is below required profile threshold ({min_score})."
+    return True, "Quality filters passed."
+
 def create_timeframe_cache() -> dict[str, pd.DataFrame | None]:
     return {timeframe: None for timeframe in TF_GRANULARITY}
 
@@ -400,6 +417,19 @@ def process_dataframe(df, symbol: str = DEFAULT_SYMBOL):
         "prev_day_close": round(prev_close, 3)
     }
 
+def get_continuous_session_multiplier() -> float:
+    """Computes a continuous session volatility weighting curve based on UTC hour for synthetic indices."""
+    utc_now = datetime.now(timezone.utc)
+    hour = utc_now.hour + utc_now.minute / 60.0
+    if 7.0 <= hour <= 17.0:
+        return 1.20
+    elif 5.0 <= hour < 7.0 or 17.0 < hour <= 20.0:
+        return 1.10
+    elif 20.0 < hour <= 23.0 or 2.0 <= hour < 5.0:
+        return 0.95
+    else:
+        return 0.85
+
 def evaluate_multi_path_strategy(
     tf_data,
     higher_tf_data,
@@ -409,7 +439,7 @@ def evaluate_multi_path_strategy(
     profile=CURRENT_PROFILE,
     include_sub_5m_confluence=True,
 ):
-    """Unified style-aware and multi-path strategy evaluator incorporating dynamic regime multipliers, time-of-day weighting, Path I Market Open Bias, and Opening Range Fade traps."""
+    """Institutional-Grade Multi-Path Strategy Evaluator incorporating Regime Gating, Continuous Session Volatility Curves, and Momentum Velocity Skew."""
     atr = tf_data.get("atr", 1.0)
     adx = tf_data.get("adx", 20.0)
     rsi = tf_data.get("rsi", 50.0)
@@ -425,12 +455,11 @@ def evaluate_multi_path_strategy(
     total_score = 0
     active_paths = []
 
-    # Time-of-Day / Session Volatility Weighting Factor
-    utc_hour = datetime.now(timezone.utc).hour
-    is_high_liquidity_session = 7 <= utc_hour <= 19
-    session_weight = 1.15 if is_high_liquidity_session else 0.85
+    session_weight = get_continuous_session_multiplier()
 
-    # Style-specific adjustments or fallback to comprehensive multi-path router
+    is_trending_regime = adx >= 22.0 and not is_squeeze
+    is_ranging_regime = adx < 20.0 or is_squeeze
+
     if ACTIVE_TRADING_STYLE == "SCALPING":
         regime = "SCALPING_MOMENTUM_REVERSAL"
         if stoch_k < 20 and rsi < 40:
@@ -450,12 +479,13 @@ def evaluate_multi_path_strategy(
 
     elif ACTIVE_TRADING_STYLE == "SWING":
         regime = "SWING_MACRO_TREND_FOLLOWING"
-        if higher_trend == "BULLISH" and current_price > ema20:
-            total_score += 55
-            active_paths.append("Swing Higher-TF Bullish Trend Alignment")
-        elif higher_trend == "BEARISH" and current_price < ema20:
-            total_score -= 55
-            active_paths.append("Swing Higher-TF Bearish Trend Alignment")
+        if is_trending_regime:
+            if higher_trend == "BULLISH" and current_price > ema20:
+                total_score += 55
+                active_paths.append("Swing Higher-TF Bullish Trend Alignment")
+            elif higher_trend == "BEARISH" and current_price < ema20:
+                total_score -= 55
+                active_paths.append("Swing Higher-TF Bearish Trend Alignment")
         if cpr:
             pivot = cpr.get("pivot", current_price)
             if current_price > pivot and higher_trend == "BULLISH":
@@ -466,8 +496,7 @@ def evaluate_multi_path_strategy(
                 active_paths.append("Swing Below Daily CPR Pivot")
 
     else:
-        # INTRADAY / COMPREHENSIVE PATH EVALUATOR ROUTER
-        if adx > 22.0 and not is_squeeze:
+        if is_trending_regime:
             regime = "STRATEGY_1_MTF_TREND_MOMENTUM"
             if higher_trend == "BULLISH" and current_price > ema20 and 45 < rsi < 65 and stoch_k < 30:
                 total_score += 40
@@ -542,7 +571,6 @@ def evaluate_multi_path_strategy(
                     total_score -= 25
                     active_paths.append("Path G (Bearish Pinbar)")
 
-    # Path F: Fair Value Gap (FVG) Retest
     if len(tf_data.get("candles", [])) >= 3:
         c_prev2 = tf_data["candles"][-3]
         c_prev1 = tf_data["candles"][-2]
@@ -558,7 +586,6 @@ def evaluate_multi_path_strategy(
                 total_score -= 20
                 active_paths.append("Path F (Bearish FVG Retest)")
 
-    # Path I: Market Open 15-Minute Candle Bias & Opening Range Trap Fade
     if all_timeframes and '15m' in all_timeframes:
         tf_15m = all_timeframes['15m']
         candles_15m = tf_15m.get("candles", [])
@@ -570,7 +597,6 @@ def evaluate_multi_path_strategy(
             open_low = session_open_candle['low']
             close_15m = latest_15m['close']
             
-            # Standard 15m breakout bias
             if close_15m > open_price and current_price >= open_price:
                 total_score += 30
                 active_paths.append("Path I (Market Open 15m Bullish Bias)")
@@ -578,7 +604,6 @@ def evaluate_multi_path_strategy(
                 total_score -= 30
                 active_paths.append("Path I (Market Open 15m Bearish Bias)")
 
-            # Opening Range Rejection / Fade (Trap Strategy): Fade false breaks above/below the 15m open candle high/low
             if current_price > open_high and stoch_k > 85 and rsi > 75:
                 total_score -= 35
                 active_paths.append("Path I (Opening Range Bullish Trap Fade)")
@@ -586,7 +611,33 @@ def evaluate_multi_path_strategy(
                 total_score += 35
                 active_paths.append("Path I (Opening Range Bearish Trap Fade)")
 
-    # Apply Session Weighting
+    keltner_upper = ema20 + (atr * 2.0)
+    keltner_lower = ema20 - (atr * 2.0)
+    if current_price > keltner_upper and stoch_k > 65 and adx > 25:
+        total_score += 30
+        active_paths.append("Path J (Keltner Upper Channel Breakout)")
+    elif current_price < keltner_lower and stoch_k < 35 and adx > 25:
+        total_score -= 30
+        active_paths.append("Path J (Keltner Lower Channel Breakdown)")
+
+    ema30 = tf_data.get("ema30", current_price)
+    ema100 = tf_data.get("ema100", current_price)
+    if is_trending_regime:
+        if ema20 > ema30 > ema100 and current_price > ema20 and adx > 28:
+            total_score += 35
+            active_paths.append("Path K (Bullish EMA Ribbon Velocity Expansion)")
+        elif ema20 < ema30 < ema100 and current_price < ema20 and adx > 28:
+            total_score -= 35
+            active_paths.append("Path K (Bearish EMA Ribbon Velocity Expansion)")
+
+    stoch_d = tf_data.get("stoch_d_history", [50])[-1]
+    if stoch_k < 15 and stoch_d < 15 and rsi < 30:
+        total_score += 30
+        active_paths.append("Path L (Stochastics Double-Bottom Oversold Reversal)")
+    elif stoch_k > 85 and stoch_d > 85 and rsi > 70:
+        total_score -= 30
+        active_paths.append("Path L (Stochastics Double-Top Overbought Rejection)")
+
     total_score = int(round(total_score * session_weight))
 
     min_score = profile["min_consensus_score"]
@@ -594,7 +645,7 @@ def evaluate_multi_path_strategy(
         "regime": regime,
         "consensus_score": total_score,
         "active_paths": active_paths,
-        "reasoning": f"Style: {ACTIVE_TRADING_STYLE} | Regime: {regime} | SessionWt: {session_weight} | Score: {total_score} (Threshold: ±{min_score})"
+        "reasoning": f"Style: {ACTIVE_TRADING_STYLE} | Regime: {regime} | SessionWt: {session_weight:.2f} | Score: {total_score} (Threshold: �{min_score})"
     }
 
     action = None
@@ -728,7 +779,6 @@ def check_and_auto_trigger_trade(agent_state, symbol: str = DEFAULT_SYMBOL):
         if not risk_allowed:
             return
             
-        # Global portfolio position check across all supported symbols
         all_positions = account_state.get("positions", [])
         open_managed_positions = [p for p in all_positions if int(p.get("magic", 0)) == MT5_MAGIC_NUMBER]
         if len(open_managed_positions) >= MAX_OPEN_POSITIONS or not bridge_status.get("trade_allowed"):
@@ -738,7 +788,6 @@ def check_and_auto_trigger_trade(agent_state, symbol: str = DEFAULT_SYMBOL):
         if not symbol_market.get("available"):
             return
 
-        # Spread & Slippage Guard
         import MetaTrader5 as mt5
         symbol_info = mt5.symbol_info(symbol)
         if symbol_info is not None:
@@ -837,7 +886,6 @@ def manage_active_trades(agent_state):
         new_tp = current_tp
         evolution_action = None
 
-        # 1. STYLE-AWARE PARTIAL SCALE-OUT
         if profit_points >= atr * scale_threshold and ticket not in scaled_out_positions and current_volume >= 0.02:
             scale_out_volume = round(current_volume * 0.5, 2)
             succeeded_so, _, _ = mt5_bridge.close_position(ticket, volume=scale_out_volume)
@@ -854,7 +902,6 @@ def manage_active_trades(agent_state):
                     status="PARTIAL_CLOSED"
                 )
 
-        # 2. CHANDELIER TRAILING STOP RATETCH
         if profit_points >= atr * 1.0 and (current_sl == 0.0 or (pos_type == "BUY" and current_sl < entry_price) or (pos_type == "SELL" and (current_sl > entry_price or current_sl == 0.0))):
             new_sl = entry_price + (atr * 0.2 if pos_type == "BUY" else -atr * 0.2)
             evolution_action = "Moved SL to Breakeven + 0.2 ATR buffer"
@@ -882,7 +929,6 @@ def manage_active_trades(agent_state):
                 active_trade_evolution_logs[ticket].append(evolution_action)
             continue
 
-        # 3. STYLE-AWARE STAGNATION CUT
         opened_at = datetime.fromtimestamp(
             int(pos["time"]), tz=datetime.now().astimezone().tzinfo
         )
@@ -1153,7 +1199,6 @@ def broadcast_state_update():
 
                     risk_allowed, _ = check_daily_loss_limit(account_state)
                     
-                    # Global portfolio position check across all supported symbols
                     all_positions = account_state.get("positions", [])
                     open_managed_positions = [p for p in all_positions if int(p.get("magic", 0)) == MT5_MAGIC_NUMBER]
                     
@@ -1181,7 +1226,6 @@ def broadcast_state_update():
                             sl_mult = base_sl_mult * 1.2 if is_volatility_expansion else base_sl_mult
                             tp_mult = base_tp_mult * 1.2 if is_volatility_expansion else base_tp_mult
 
-                            # Spread & Slippage Guard
                             import MetaTrader5 as mt5
                             symbol_info = mt5.symbol_info(symbol)
                             if symbol_info is not None:
@@ -1412,7 +1456,6 @@ class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
                 self._send_json(400, {"status": "REJECTED", "message": message, "mt5_result": result})
                 return
 
-            # Enroll UI-triggered trade into Python telemetry and post-trade management safely
             ticket = result.get('order')
             if ticket:
                 volume = result.get('volume', 0.0)

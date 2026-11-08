@@ -13,6 +13,14 @@ from typing import Any
 _SYMBOL_FILLING_FOK = 1
 _SYMBOL_FILLING_IOC = 2
 
+# Fallbacks used by ``MT5Bridge._filling_mode`` when the MetaTrader5 Python
+# package is unavailable (``mt5`` is ``None``). The values mirror the documented
+# C++ ``OrderFillingType`` enum assignments so callers always receive a valid
+# ``type_filling`` integer, even on import failure.
+_FALLBACK_ORDER_FILLING_IOC = 1
+_FALLBACK_ORDER_FILLING_FOK = 2
+_FALLBACK_ORDER_FILLING_RETURN = 0
+
 try:
     import MetaTrader5 as mt5
 except ImportError:
@@ -276,12 +284,20 @@ class MT5Bridge:
 
     @staticmethod
     def _filling_mode(info: Any) -> int:
-        supported = int(info.filling_mode)
+        # Mirror the documented C++ ``OrderFillingType`` enum values so the
+        # bridge always returns a valid ``type_filling`` integer, whether or not
+        # the MetaTrader5 Python package is installed/imported successfully.
+        order_filling_ioc = getattr(mt5, "ORDER_FILLING_IOC", _FALLBACK_ORDER_FILLING_IOC)
+        order_filling_fok = getattr(mt5, "ORDER_FILLING_FOK", _FALLBACK_ORDER_FILLING_FOK)
+        order_filling_return = getattr(mt5, "ORDER_FILLING_RETURN", _FALLBACK_ORDER_FILLING_RETURN)
+        if info is None or not hasattr(info, "filling_mode"):
+            return order_filling_ioc
+        supported = int(getattr(info, "filling_mode", 0))
         if supported & _SYMBOL_FILLING_FOK:
-            return mt5.ORDER_FILLING_FOK
+            return order_filling_fok
         if supported & _SYMBOL_FILLING_IOC:
-            return mt5.ORDER_FILLING_IOC
-        return mt5.ORDER_FILLING_RETURN
+            return order_filling_ioc
+        return order_filling_return
 
     @staticmethod
     def _risk_sized_volume(
@@ -350,6 +366,18 @@ class MT5Bridge:
                 low = middle
             else:
                 high = middle - 1
+
+        if low > 0:
+            volume, risk, margin, error = candidate(low)
+            if error:
+                return None, None, error
+            if (
+                risk is not None
+                and margin is not None
+                and risk <= risk_cap
+                and margin <= free_margin
+            ):
+                return volume, risk, None
 
         volume, risk, _, error = candidate(low)
         if error:

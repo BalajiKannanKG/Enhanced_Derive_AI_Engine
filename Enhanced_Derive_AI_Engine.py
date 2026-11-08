@@ -409,7 +409,7 @@ def evaluate_multi_path_strategy(
     profile=CURRENT_PROFILE,
     include_sub_5m_confluence=True,
 ):
-    """Unified style-aware and multi-path strategy evaluator incorporating dynamic regime multipliers, time-of-day weighting, and Path I Market Open Bias."""
+    """Unified style-aware and multi-path strategy evaluator incorporating dynamic regime multipliers, time-of-day weighting, Path I Market Open Bias, and Opening Range Fade traps."""
     atr = tf_data.get("atr", 1.0)
     adx = tf_data.get("adx", 20.0)
     rsi = tf_data.get("rsi", 50.0)
@@ -425,7 +425,7 @@ def evaluate_multi_path_strategy(
     total_score = 0
     active_paths = []
 
-    # Enhancement 2: Time-of-Day / Session Volatility Weighting Factor
+    # Time-of-Day / Session Volatility Weighting Factor
     utc_hour = datetime.now(timezone.utc).hour
     is_high_liquidity_session = 7 <= utc_hour <= 19
     session_weight = 1.15 if is_high_liquidity_session else 0.85
@@ -558,7 +558,7 @@ def evaluate_multi_path_strategy(
                 total_score -= 20
                 active_paths.append("Path F (Bearish FVG Retest)")
 
-    # Path I: Market Open 15-Minute Candle Bias
+    # Path I: Market Open 15-Minute Candle Bias & Opening Range Trap Fade
     if all_timeframes and '15m' in all_timeframes:
         tf_15m = all_timeframes['15m']
         candles_15m = tf_15m.get("candles", [])
@@ -566,14 +566,25 @@ def evaluate_multi_path_strategy(
             session_open_candle = candles_15m[0]
             latest_15m = candles_15m[-1]
             open_price = session_open_candle['open']
+            open_high = session_open_candle['high']
+            open_low = session_open_candle['low']
             close_15m = latest_15m['close']
             
+            # Standard 15m breakout bias
             if close_15m > open_price and current_price >= open_price:
                 total_score += 30
                 active_paths.append("Path I (Market Open 15m Bullish Bias)")
             elif close_15m < open_price and current_price <= open_price:
                 total_score -= 30
                 active_paths.append("Path I (Market Open 15m Bearish Bias)")
+
+            # Opening Range Rejection / Fade (Trap Strategy): Fade false breaks above/below the 15m open candle high/low
+            if current_price > open_high and stoch_k > 85 and rsi > 75:
+                total_score -= 35
+                active_paths.append("Path I (Opening Range Bullish Trap Fade)")
+            elif current_price < open_low and stoch_k < 15 and rsi < 25:
+                total_score += 35
+                active_paths.append("Path I (Opening Range Bearish Trap Fade)")
 
     # Apply Session Weighting
     total_score = int(round(total_score * session_weight))
@@ -716,12 +727,26 @@ def check_and_auto_trigger_trade(agent_state, symbol: str = DEFAULT_SYMBOL):
         risk_allowed, _ = check_daily_loss_limit(account_state)
         if not risk_allowed:
             return
-        positions = account_state.get("positions", [])
-        if len(positions) >= MAX_OPEN_POSITIONS or not bridge_status.get("trade_allowed"):
+            
+        # Global portfolio position check across all supported symbols
+        all_positions = account_state.get("positions", [])
+        open_managed_positions = [p for p in all_positions if int(p.get("magic", 0)) == MT5_MAGIC_NUMBER]
+        if len(open_managed_positions) >= MAX_OPEN_POSITIONS or not bridge_status.get("trade_allowed"):
             return
+
         symbol_market = account_state.get("symbols", {}).get(symbol, {})
         if not symbol_market.get("available"):
             return
+
+        # Spread & Slippage Guard
+        import MetaTrader5 as mt5
+        symbol_info = mt5.symbol_info(symbol)
+        if symbol_info is not None:
+            current_spread = symbol_info.spread * symbol_info.point
+            max_allowed_spread = atr * 0.25
+            if current_spread > max_allowed_spread:
+                print(f"[SPREAD GUARD REJECT] {symbol} spread ({current_spread:.3f}) exceeds max allowed ({max_allowed_spread:.3f}).")
+                return
 
         succeeded, message, result = mt5_bridge.place_market_order(
             payload, MAX_RISK_PER_TRADE_PERCENT
@@ -1127,8 +1152,12 @@ def broadcast_state_update():
                         latest_mt5_status.update(bridge_status)
 
                     risk_allowed, _ = check_daily_loss_limit(account_state)
-                    positions = account_state.get("positions", [])
-                    if risk_allowed and len(positions) < MAX_OPEN_POSITIONS and bridge_status.get("trade_allowed"):
+                    
+                    # Global portfolio position check across all supported symbols
+                    all_positions = account_state.get("positions", [])
+                    open_managed_positions = [p for p in all_positions if int(p.get("magic", 0)) == MT5_MAGIC_NUMBER]
+                    
+                    if risk_allowed and len(open_managed_positions) < MAX_OPEN_POSITIONS and bridge_status.get("trade_allowed"):
                         symbol_candidates.sort(key=lambda x: x["adjusted_score"], reverse=True)
                         best_candidate = symbol_candidates[0]
 
@@ -1151,6 +1180,16 @@ def broadcast_state_update():
 
                             sl_mult = base_sl_mult * 1.2 if is_volatility_expansion else base_sl_mult
                             tp_mult = base_tp_mult * 1.2 if is_volatility_expansion else base_tp_mult
+
+                            # Spread & Slippage Guard
+                            import MetaTrader5 as mt5
+                            symbol_info = mt5.symbol_info(symbol)
+                            if symbol_info is not None:
+                                current_spread = symbol_info.spread * symbol_info.point
+                                max_allowed_spread = atr * 0.25
+                                if current_spread > max_allowed_spread:
+                                    print(f"[SPREAD GUARD REJECT] Best candidate {symbol} spread ({current_spread:.3f}) exceeds max allowed ({max_allowed_spread:.3f}). Skipping.")
+                                    return
 
                             payload = {
                                 "symbol": symbol,
@@ -1179,7 +1218,7 @@ def broadcast_state_update():
                                     regime=audit['regime'],
                                     score=audit['consensus_score'],
                                     strategies=audit['active_paths'],
-                                    modifications=["Initial Order Placed (Enhanced Multi-Symbol & Chandelier Ready)"],
+                                    modifications=["Initial Order Placed (Global Portfolio & Spread Guard Armed)"],
                                     entry_price=entry,
                                     margin=margin,
                                     volume=volume,

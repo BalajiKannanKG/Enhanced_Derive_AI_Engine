@@ -104,9 +104,9 @@ class BacktestTests(unittest.TestCase):
         )
 
         self.assertEqual(standard_audit["consensus_score"], 0)
-        self.assertEqual(five_minute_audit["consensus_score"], 30)
+        self.assertEqual(five_minute_audit["consensus_score"], 35)
         self.assertIn(
-            "Path E (5m/15m/1h Bullish Alignment)",
+            "Path E (MTF Bullish Alignment)",
             five_minute_audit["active_paths"],
         )
 

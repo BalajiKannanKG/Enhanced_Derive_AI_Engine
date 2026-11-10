@@ -553,7 +553,47 @@ class MT5Bridge:
             }
             return self._trade_result(mt5.order_send(request))
 
-    def close_position(self, ticket: int) -> tuple[bool, str, dict[str, Any]]:
+    def close_position(self, ticket: int, volume: float = None):
+        """
+        Closes an open position by ticket. Supports full closure or partial closure if volume is specified.
+        """
+        # Ensure MetaTrader5 is connected and handle the order request
+        position = self.get_position_by_ticket(ticket)
+        if not position:
+            return False, "Position not found", None
+            
+        close_volume = volume if volume is not None else position['volume']
+        
+        # Build the trade request dictionary for MT5
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": position['symbol'],
+            "volume": close_volume,
+            "type": mt5.ORDER_TYPE_SELL if position['type'] == 'BUY' else mt5.ORDER_TYPE_BUY,
+            "position": ticket,
+            "price": mt5.symbol_info_tick(position['symbol']).bid if position['type'] == 'BUY' else mt5.symbol_info_tick(position['symbol']).ask,
+            "deviation": 20,
+            "magic": MT5_MAGIC_NUMBER,
+            "comment": "Python partial/full close",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": mt5.ORDER_FILLING_IOC,
+        }
+        
+        result = mt5.order_send(request)
+        if result.retcode != mt5.TRADE_RETCODE_DONE:
+            return False, f"Order failed, retcode={result.retcode}", result
+            
+        return True, "Success", result
+    def get_position_by_ticket(self, ticket: int) -> dict[str, Any] | None:
+        """Helper to fetch an open position as a dictionary by its ticket ID."""
+        with self._lock:
+            if not self.connect():
+                return None
+            positions = mt5.positions_get(ticket=int(ticket))
+            if not positions:
+                return None
+            return self._position_data(positions[0])
+    def close_position(self, ticket: int, volume: float = None) -> tuple[bool, str, dict[str, Any]]:
         with self._lock:
             if not self.connect():
                 return False, self._detail, {}
@@ -567,12 +607,15 @@ class MT5Bridge:
             info = mt5.symbol_info(position.symbol)
             if info is None:
                 return False, f"MT5 symbol {position.symbol} is unavailable.", {}
+            
+            close_volume = float(volume) if volume is not None else float(position.volume)
             is_buy = position.type == mt5.POSITION_TYPE_BUY
+            
             request = {
                 "action": mt5.TRADE_ACTION_DEAL,
                 "position": int(ticket),
                 "symbol": position.symbol,
-                "volume": float(position.volume),
+                "volume": close_volume,
                 "type": mt5.ORDER_TYPE_SELL if is_buy else mt5.ORDER_TYPE_BUY,
                 "price": float(tick.bid if is_buy else tick.ask),
                 "deviation": 50,
@@ -581,7 +624,7 @@ class MT5Bridge:
                 "type_filling": self._filling_mode(info),
             }
             return self._trade_result(mt5.order_send(request))
-
+    
     def trade_history(self, days: int = 365) -> list[dict[str, Any]] | None:
         with self._lock:
             if not self.connect():

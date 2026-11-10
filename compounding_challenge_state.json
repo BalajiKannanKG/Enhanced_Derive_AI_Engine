@@ -1,0 +1,21 @@
+{
+    "start_date": "2026-11-10",
+    "day_number": 1,
+    "starting_balance": 200.0,
+    "current_step": 128,
+    "current_target_balance": 103101.97,
+    "high_water_mark": 99680.32,
+    "status": "ACTIVE",
+    "daily_history": {
+        "2026-11-10": {
+            "day": 1,
+            "starting_balance": 200.0,
+            "current_step": 128,
+            "current_target_balance": 103101.97,
+            "ending_balance": 200.0,
+            "daily_profit": 0.0,
+            "halt_triggered": false,
+            "progress_pct": 0.0
+        }
+    }
+}

@@ -14,20 +14,16 @@
     <header>
         <h1>
             <span class="brand-mark" aria-hidden="true">↗</span>
-            <span class="brand-copy">MT5 Trading Desk<small>Multi-symbol market intelligence</small></span>
-            <span id="livePriceDisplay" class="live-price-tag">MT5 · Symbol: ---</span>
+            <span class="brand-copy">MT5 Desk</span>
         </h1>
         <div class="header-actions">
-            <!-- Global Portfolio Lock & Spread Guard Status Badges -->
-            <div id="portfolio-lock-badge" class="badge badge-normal" title="Global Portfolio Position Lock across all symbols">Portfolio Lock: Active (0 / 1 Pos)</div>
-            <div id="spread-guard-badge" class="badge badge-success" title="Dynamic Spread & Slippage Guard Status">Spread Guard: Optimal</div>
-            
-            <label for="symbol-selector" class="badge">Symbol</label>
-            <select id="symbol-selector" class="symbol-select" onchange="selectTradingSymbol(this.value)">
-                <option>Loading symbols...</option>
+            <div id="portfolio-lock-badge" class="badge badge-normal" title="Global Portfolio Position Lock">Lock: 0/1</div>
+            <div id="spread-guard-badge" class="badge badge-success" title="Dynamic Spread & Slippage Guard Status">Spread: Optimal</div>
+            <select id="symbol-selector" class="symbol-select" onchange="selectTradingSymbol(this.value)" aria-label="Symbol selector">
+                <option>Loading...</option>
             </select>
             <button class="theme-btn" onclick="toggleTheme()" id="themeToggleBtn" aria-label="Toggle color theme">☀️ Light</button>
-            <div class="badge" id="last-update" role="status">Syncing...</div>
+            <div class="badge" id="last-update" role="status">Sync</div>
         </div>
     </header>
 
@@ -131,7 +127,114 @@
         </div>
 
         <!-- Right Column: Forecast, decision audit, and confluence matrix -->
-        <div class="right-column">
+       <div class="right-column">
+<!-- 🎯 5% Step Compounding Challenge Live Widget (Upgraded Edition) -->
+<div class="card" id="compounding-challenge-card" style="border: 1px solid var(--accent-cyan); margin-bottom: 6px;">
+  <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 4px; margin-bottom: 6px;">
+    <span style="font-weight: bold; font-size: 0.75rem; color: var(--accent-cyan);">🎯 5% STEP COMPOUNDING CHALLENGE</span>
+    <span id="challenge-status-badge" class="badge" style="background: rgba(16, 185, 129, 0.2); color: var(--accent-green);">ACTIVE</span>
+  </div>
+  
+  <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; text-align: center; margin-bottom: 6px;">
+    <div style="background: var(--bg-color); padding: 3px; border-radius: 4px;">
+      <div style="font-size: 0.55rem; color: var(--text-muted);">DAY / STEP</div>
+      <div id="chal-day-step" style="font-size: 0.75rem; font-weight: bold; color: var(--text-main);">Day 1</div>
+    </div>
+    <div style="background: var(--bg-color); padding: 3px; border-radius: 4px;">
+      <div style="font-size: 0.55rem; color: var(--text-muted);">BALANCE</div>
+      <div id="chal-balance" style="font-size: 0.75rem; font-weight: bold; color: var(--accent-cyan);">$200.00</div>
+    </div>
+    <div style="background: var(--bg-color); padding: 3px; border-radius: 4px;">
+      <div style="font-size: 0.55rem; color: var(--text-muted);">DAILY PnL</div>
+      <div id="chal-daily-pnl" style="font-size: 0.75rem; font-weight: bold; color: var(--accent-green);">$0.00</div>
+    </div>
+    <div style="background: var(--bg-color); padding: 3px; border-radius: 4px;">
+      <div style="font-size: 0.55rem; color: var(--text-muted);">MAX DD LIMIT</div>
+      <div id="chal-dd-limit" style="font-size: 0.75rem; font-weight: bold; color: var(--accent-red);">$194.00</div>
+    </div>
+  </div>
+
+  <!-- Detailed Trade Analytics Breakdown -->
+  <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; text-align: center; margin-bottom: 6px; border-top: 1px dashed var(--border-color); padding-top: 4px;">
+    <div style="background: var(--bg-color); padding: 2px; border-radius: 3px;">
+      <div style="font-size: 0.5rem; color: var(--text-muted);">TOTAL TRADES</div>
+      <div id="chal-total-trades" style="font-size: 0.7rem; font-weight: bold; color: var(--text-main);">0</div>
+    </div>
+    <div style="background: var(--bg-color); padding: 2px; border-radius: 3px;">
+      <div style="font-size: 0.5rem; color: var(--text-muted);">AUTO / MANUAL</div>
+      <div id="chal-auto-manual" style="font-size: 0.7rem; font-weight: bold; color: var(--accent-yellow);">0 / 0</div>
+    </div>
+    <div style="background: var(--bg-color); padding: 2px; border-radius: 3px;">
+      <div style="font-size: 0.5rem; color: var(--text-muted);">WIN RATE</div>
+      <div id="chal-win-rate" style="font-size: 0.7rem; font-weight: bold; color: var(--accent-cyan);">0.0%</div>
+    </div>
+    <div style="background: var(--bg-color); padding: 2px; border-radius: 3px;">
+      <div style="font-size: 0.5rem; color: var(--text-muted);">RETURN %</div>
+      <div id="chal-return-pct" style="font-size: 0.7rem; font-weight: bold; color: var(--accent-green);">0.0%</div>
+    </div>
+  </div>
+
+  <div>
+    <div style="display: flex; justify-content: space-between; font-size: 0.6rem; margin-bottom: 2px;">
+      <span style="color: var(--text-muted);">Step Progress Target: <span id="chal-target-val">$10.00</span></span>
+      <span id="chal-progress-pct" style="font-weight: bold; color: var(--accent-cyan);">0.0%</span>
+    </div>
+    <div style="width: 100%; background: var(--bg-color); height: 6px; border-radius: 3px; overflow: hidden;">
+      <div id="chal-progress-bar" style="width: 0%; background: linear-gradient(90deg, var(--accent-cyan), var(--accent-green)); height: 100%; transition: width 0.4s ease;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+function updateChallengeUI(data) {
+  if (!data) return;
+  document.getElementById('chal-day-step').innerText = 'Day ' + (data.day_number || 1);
+  const currentBal = Number(data.current_balance || 200.00);
+  const startBal = Number(data.starting_balance || 200.00);
+  document.getElementById('chal-balance').innerText = '$' + currentBal.toFixed(2);
+  
+  const dailyPnl = Number(data.daily_profit || (currentBal - startBal));
+  const pnlEl = document.getElementById('chal-daily-pnl');
+  pnlEl.innerText = (dailyPnl >= 0 ? '+$' : '-$') + Math.abs(dailyPnl).toFixed(2);
+  pnlEl.style.color = dailyPnl >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+  
+  document.getElementById('chal-dd-limit').innerText = '$' + Number(data.max_drawdown_limit || (startBal * 0.97)).toFixed(2);
+  document.getElementById('chal-target-val').innerText = '$' + Number(data.target_balance || (startBal * 1.05)).toFixed(2);
+  
+  // Trade breakdown metrics
+  document.getElementById('chal-total-trades').innerText = data.total_trades || 0;
+  document.getElementById('chal-auto-manual').innerText = `${data.auto_trades || 0} / ${data.manual_trades || 0}`;
+  document.getElementById('chal-win-rate').innerText = (Number(data.win_rate || 0)).toFixed(1) + '%';
+  
+  const returnPct = startBal > 0 ? ((currentBal - startBal) / startBal) * 100 : 0;
+  const returnEl = document.getElementById('chal-return-pct');
+  returnEl.innerText = (returnPct >= 0 ? '+' : '') + returnPct.toFixed(1) + '%';
+  returnEl.style.color = returnPct >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+
+  const progress = Number(data.progress_pct || data.step_progress || 0);
+  document.getElementById('chal-progress-pct').innerText = progress.toFixed(1) + '%';
+  document.getElementById('chal-progress-bar').style.width = Math.min(100, Math.max(0, progress)) + '%';
+  
+  const status = data.status || 'ACTIVE';
+  const badge = document.getElementById('challenge-status-badge');
+  badge.innerText = status;
+  
+  if (status.includes('HALTED') || status.includes('BREACH')) {
+    badge.style.background = 'rgba(239, 68, 68, 0.2)';
+    badge.style.color = 'var(--accent-red)';
+  } else if (status.includes('CIRCUIT')) {
+    badge.style.background = 'rgba(245, 158, 11, 0.2)';
+    badge.style.color = 'var(--accent-yellow)';
+  } else {
+    badge.style.background = 'rgba(16, 185, 129, 0.2)';
+    badge.style.color = 'var(--accent-green)';
+  }
+}
+</script>
+</script>
+    <!-- END OF WIDGET INSERTION -->
+
+    <!-- Your existing cards follow below... -->
             <!-- Selected-symbol capital and broker-volume information -->
             <div class="card" style="flex: 1.3; min-height: 0;" hidden>
                 <h3>
@@ -170,7 +273,7 @@
 
             </div>
 
-            <div class="card prediction-panel" style="flex: 0.95; min-height: 0;">
+            <div class="card prediction-panel">
                 <h3>🔮 S/R Proximity & Open/Close Forecast</h3>
                 <div id="sr-alert-box" class="sr-alert-pill">Scanning S/R...</div>
                 <div class="forecast-summary">
@@ -185,7 +288,7 @@
                 </div>
             </div>
             <!-- Decision Audit & Strategy Reasoning Card -->
-            <div class="card decision-audit-card" style="border-color: var(--accent-cyan); flex: 1.2; min-height: 0;">
+            <div class="card decision-audit-card" style="border-color: var(--accent-cyan);">
                 <h3>🎯 Strategy Audit & Reasoning</h3>
                 <div class="metric-row"><span>Market Regime:</span> <span class="metric-value" id="audit-regime" style="color:var(--accent-cyan);">---</span></div>
                 <div class="metric-row"><span>Consensus Score:</span> <span class="metric-value" id="audit-score">0</span></div>
@@ -195,7 +298,7 @@
                 <div id="audit-reasoning" style="font-size: 0.6rem; background: rgba(0,0,0,0.03); border: 1px solid var(--border-color); padding: 3px; border-radius: 3px; max-height: 35px; overflow-y: auto;">Initializing decision matrix...</div>
             </div>
             <!-- Confluence Matrix & Manual Controls -->
-            <div class="card confluence-panel" style="border-color: var(--accent-purple); flex: 1.35; min-height: 0;">
+            <div class="card confluence-panel" style="border-color: var(--accent-purple);">
                 <h3>🚦 Confluence Checklists & Manual Controls</h3>
                 <div class="confluence-side-box">
                     <!-- BUY Confluences -->
@@ -816,10 +919,10 @@
             const portfolioBadge = document.getElementById('portfolio-lock-badge');
             if (portfolioBadge) {
                 if (openPositionsList.length >= maxPosLimit) {
-                    portfolioBadge.textContent = `Portfolio Lock: MAX (${openPositionsList.length}/${maxPosLimit})`;
+                    portfolioBadge.textContent = `Lock: MAX (${openPositionsList.length}/${maxPosLimit})`;
                     portfolioBadge.className = 'badge badge-warning';
                 } else {
-                    portfolioBadge.textContent = `Portfolio Lock: Ready (${openPositionsList.length}/${maxPosLimit})`;
+                    portfolioBadge.textContent = `Lock: ${openPositionsList.length}/${maxPosLimit}`;
                     portfolioBadge.className = 'badge badge-success';
                 }
             }
@@ -907,8 +1010,10 @@
                     const digits = Number.isInteger(Number(globalData.mt5_symbol?.digits))
                         ? Number(globalData.mt5_symbol.digits)
                         : 3;
-                    document.getElementById('livePriceDisplay').innerText =
-                        `${selectedSymbol} (${marketDataSource}): ${currentLivePrice.toFixed(digits)}`;
+                    const priceEl = document.getElementById('livePriceDisplay');
+                    if (priceEl) {
+                        priceEl.innerText = `${selectedSymbol} (${marketDataSource}): ${currentLivePrice.toFixed(digits)}`;
+                    }
 
                     const foundKey = Object.keys(globalData.timeframes).find(k => k.toLowerCase() === selectedTimeframe.toLowerCase());
                     const tf = foundKey ? globalData.timeframes[foundKey] : null;
@@ -933,8 +1038,10 @@
                     } else {
                         currentLivePrice = 0;
                         const marketDataSource = globalData.market_data_source || "MT5";
-                        document.getElementById('livePriceDisplay').innerText =
-                            `${selectedSymbol} (${marketDataSource}): ---`;
+                        const priceEl2 = document.getElementById('livePriceDisplay');
+                        if (priceEl2) {
+                            priceEl2.innerText = `${selectedSymbol} (${marketDataSource}): ---`;
+                        }
                     }
                 }
 
@@ -983,7 +1090,9 @@
                     
                     document.getElementById('audit-reasoning').innerText = audit.reasoning || "Analyzing market conditions...";
                 }
-
+                if (globalData.challenge) {
+                    updateChallengeUI(globalData.challenge);
+                }
                 if (globalData.signal) {
                     const sigText = globalData.signal;
                     const sig = document.getElementById('val-signal');
@@ -1464,8 +1573,10 @@
                 const digits = Number.isInteger(Number(globalData.mt5_symbol?.digits))
                     ? Number(globalData.mt5_symbol.digits)
                     : 3;
-                document.getElementById('livePriceDisplay').innerText =
-                    `${selectedSymbol} (${marketDataSource}): ${currentLivePrice.toFixed(digits)}`;
+                const priceEl3 = document.getElementById('livePriceDisplay');
+                if (priceEl3) {
+                    priceEl3.innerText = `${selectedSymbol} (${marketDataSource}): ${currentLivePrice.toFixed(digits)}`;
+                }
             }
 
             updatePredictionsForSelectedTF(tf);

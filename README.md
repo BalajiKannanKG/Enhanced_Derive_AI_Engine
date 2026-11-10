@@ -536,12 +536,21 @@ default data-only mode and add tests with each trading-related change.
 
 | Path | Responsibility |
 |---|---|
-| `Enhanced_Derive_AI_Engine.py` | Deriv feed, indicator/strategy calculations, HTTP/WebSocket servers, risk checks, and MT5 integration. |
+| `Enhanced_Derive_AI_Engine.py` | Core multi-timeframe engine, indicator/strategy evaluation, HTTP/WebSocket servers, risk checks, and telemetry sink. |
+| `mt5_bridge.py` | Official MetaTrader5 connection bridge handling account metrics, position tracking, order check/send, and deal history. |
 | `backtest.py` | Read-only MT5 historical-candle replay and JSON/CSV result generation. |
-| `index.html` | Live trading dashboard and manual controls. |
+| `index.html` | Primary live trading dashboard with compact single-row header, live charts, S/R forecasts, and manual controls. |
+| `index3.html` | Advanced alternative trading dashboard layout. |
 | `tracker.html` | Day-level tracker and summary charts. |
 | `tradelog.html` | Trade-log/performance page. |
+| `quantitative_comparison_improvement_report.md` | Quantitative strategy comparison and architectural enhancement reference. |
+| `start_automated_trading.bat` | Batch script launcher for automated live trading mode. |
+| `start_manual_trading.bat` | Batch script launcher for manual live trading mode. |
+| `start_dashboard.bat` | Batch script launcher for data-only dashboard mode. |
+| `trade_telemetry.sqlite` | SQLite database storing comprehensive multi-style trade telemetry and win-rate metrics. |
 | `pyproject.toml` | Python project metadata, dependencies, and `run-engine` entry point. |
 | `.gitignore` | Excludes local environments, credentials, and runtime trading data. |
 | `tests/test_startup_safety.py` | Focused tests for local startup and risk safeguards. |
+| `tests/test_mt5_bridge.py` | Tests for MT5 bridge communication and order verification. |
+| `tests/test_backtest.py` | Tests for historical replay backtesting logic. |
 | `README.md` | Setup guide and living requirements/architecture baseline. |

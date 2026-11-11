@@ -19,7 +19,7 @@ import pandas_ta as ta
 from mt5_bridge import MT5Bridge
 from websockets.sync.server import serve
 import compounding_challenge
-import compounding_challenge
+
 try:
     # If using the class instance tracker:
     tracker = compounding_challenge.CompoundingChallengeTracker()
@@ -1097,7 +1097,12 @@ def mt5_monitor_loop():
     last_history_attempt = 0.0
     while True:
         refresh_mt5_state()
-        check_and_sync_closed_telemetry_trades()  # Continuously checks MT5 history for closed SL/TP trades
+        check_and_sync_closed_telemetry_trades()  # <-- Syncs trade_telemetry & challenge db
+        try:
+            compounding_challenge.sync_closed_challenge_trades() # <-- Ensure challenge trades sync
+        except Exception:
+            pass
+        
         now = time.monotonic()
         if not history_loaded and now - last_history_attempt >= 60:
             history_loaded = poll_mt5_market_data(include_history=True)
@@ -1105,7 +1110,6 @@ def mt5_monitor_loop():
         else:
             poll_mt5_market_data()
         time.sleep(1)
-
 def apply_mt5_tick(symbol: str, price: float, tick_epoch: int):
     global current_price
     if symbol not in symbol_tf_caches or price <= 0:
@@ -1182,48 +1186,43 @@ def poll_mt5_market_data(include_history: bool = False) -> bool:
     return history_loaded
 
 def broadcast_state_update():
-    global latest_state_payload, AUTO_TRADING_ENABLED  # <--- Add AUTO_TRADING_ENABLED here
+    global latest_state_payload, AUTO_TRADING_ENABLED
     with state_lock:
         with mt5_state_lock:
             mt5_account_data = dict(latest_mt5_account)
             mt5_status = dict(latest_mt5_status)
-            # Defined payload dictionary structure sent to UI clients
-            payload = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "agent_status": agent_status,
-                "current_signal": current_signal,
-                "current_price": current_price,
-                "current_prices": current_prices,
-                "compounding_challenge": compounding_challenge.get_current_challenge_status()
-            }
-            # 1. Extract current equity from your MT5 account dictionary
-           # Inside broadcast_state_update()
-            account_equity = float(mt5_account_data.get("equity", 200.0))
-
-            # Evaluate live challenge metrics based on current account equity
-            challenge_metrics = compounding_challenge.CompoundingChallengeTracker().evaluate_day(
-                simulated_pnl = account_equity - 200.0  # Or relative to starting balance
-            )
             
-            # 3. Check if the 5% max daily loss limit has been breached
+            # Read purely from SQLite database via Compounding Challenge tracker
+            try:
+                challenge_metrics = compounding_challenge.get_current_challenge_status()
+            except Exception as e:
+                print(f"Challenge metric retrieval error: {e}")
+                challenge_metrics = {}
+
             if challenge_metrics.get("halt_trading", False):
                 AUTO_TRADING_ENABLED = False
-                print(f"[CHALLENGE PROTECTION] Daily 5% max drawdown reached. Halting trading for the day. Daily PnL: ${challenge_metrics['daily_profit']}")
-            else:
-                # Trading remains active to pursue successive step-by-step 5% growth targets
-                pass
+                           
+            # Extract live account equity from MT5 snapshot (fallback to 200.0 if empty)
+            account_equity = float(mt5_account_data.get("equity", 100111.59))
+            account_balance = float(mt5_account_data.get("balance", 100111.59))
 
-            # 4. Include challenge_metrics in your broadcast/telemetry payload dictionary
-            state_data = {
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "agent_status": agent_status,
-                "trading_style": ACTIVE_TRADING_STYLE,
-                "default_symbol": DEFAULT_SYMBOL,
-                "mt5_account": mt5_account_data,
-                "compounding_challenge": challenge_metrics,
-                "auto_trading_enabled": AUTO_TRADING_ENABLED,
-            }
-        # ... rest of your function ...
+            # Evaluate or sync challenge tracker using actual live balance/equity
+            try:
+                challenge_tracker = compounding_challenge.CompoundingChallengeTracker(initial_capital=account_balance)
+                # If starting fresh or syncing with live balance:
+                challenge_metrics = challenge_tracker.evaluate_day(simulated_pnl=account_equity - account_balance)
+                
+                # Pull cumulative challenge stats (win rate, trade counts) from DB
+                full_status = compounding_challenge.get_current_challenge_status()
+                full_status.update(challenge_metrics)
+                challenge_metrics = full_status
+            except Exception as e:
+                print(f"Challenge metric evaluation error: {e}")
+                challenge_metrics = compounding_challenge.get_current_challenge_status()
+
+            if challenge_metrics.get("halt_trading", False):
+                AUTO_TRADING_ENABLED = False
+
         symbol_states = {}
         for symbol, caches in symbol_tf_caches.items():
             timeframes_dict = {}
@@ -1261,185 +1260,8 @@ def broadcast_state_update():
             "auto_trading_enabled": AUTO_TRADING_ENABLED,
             "max_risk_per_trade_percent": MAX_RISK_PER_TRADE_PERCENT,
             "max_open_positions": MAX_OPEN_POSITIONS,
+            "challenge": challenge_metrics  # <-- Must be included here so UI receives it
         }
-
-        manage_active_trades(state_data)
-
-        symbol_candidates = []
-        profile = CURRENT_PROFILE
-        primary_tf = profile["primary_tf"]
-        confluence_tf = profile["confluence_tf"]
-
-        for symbol, symbol_state in symbol_states.items():
-            symbol_state["mt5_account"] = mt5_account_data
-            timeframes = symbol_state.get("timeframes", {})
-            tf_data = timeframes.get(primary_tf, {})
-            higher_tf_data = timeframes.get(confluence_tf, {})
-            market_price = symbol_state.get("current_price", 0.0)
-
-            if market_price > 0 and tf_data and higher_tf_data:
-                action, audit = evaluate_multi_path_strategy(
-                    tf_data, higher_tf_data, market_price, symbol_state.get("cpr", {}), timeframes
-                )
-                symbol_state["signal"] = action or "HOLD / SCANNING"
-                symbol_state["decision_audit"] = audit
-
-                if tf_data.get("data_ready") and higher_tf_data.get("data_ready"):
-                    candles = tf_data.get("candles", [])
-                    if len(candles) >= 2:
-                        closed_timeframe = dict(tf_data)
-                        closed_timeframe["candles"] = candles[:-1]
-                        history_fields = (
-                            "bb_upper", "bb_middle", "bb_lower", "ema20_history", "ema30_history",
-                            "ema100_history", "atr_history", "adx_history", "rsi_history",
-                            "stoch_k_history", "stoch_d_history",
-                        )
-                        valid_history = True
-                        for field in history_fields:
-                            values = tf_data.get(field)
-                            if not isinstance(values, list) or len(values) != len(candles):
-                                valid_history = False
-                                break
-                            closed_timeframe[field] = values[:-1]
-
-                        if valid_history:
-                            closed_indicators = {
-                                "ema20": "ema20_history",
-                                "atr": "atr_history",
-                                "adx": "adx_history",
-                                "rsi": "rsi_history",
-                            }
-                            for field, history in closed_indicators.items():
-                                closed_timeframe[field] = closed_timeframe[history][-1]
-                            closed_price = float(closed_timeframe["candles"][-1]["close"])
-                            closed_candle_time = closed_timeframe["candles"][-1].get("time")
-
-                            if closed_candle_time is not None:
-                                closed_candle_time_str = str(closed_candle_time)
-                                previous_candle_time = last_auto_evaluated_candle_times.get(symbol)
-                                if previous_candle_time != closed_candle_time_str:
-                                    decision_timeframes = dict(timeframes)
-                                    decision_timeframes[primary_tf] = closed_timeframe
-                                    c_action, c_audit = evaluate_multi_path_strategy(
-                                        closed_timeframe, higher_tf_data, closed_price, symbol_state.get("cpr", {}), decision_timeframes
-                                    )
-                                    if c_action:
-                                        atr = float(closed_timeframe["atr"])
-                                        adx = float(closed_timeframe["adx"])
-                                        if math.isfinite(atr) and atr > 0:
-                                            t3m = timeframes.get('3m', {}).get('trend', 'FLAT')
-                                            t5m = timeframes.get('5m', {}).get('trend', 'FLAT')
-                                            t15m = timeframes.get('15m', {}).get('trend', 'FLAT')
-                                            th1 = timeframes.get('h1', {}).get('trend', 'FLAT')
-                                            alignment_bonus = 0
-                                            if c_action == "BUY" and t3m == "BULLISH" and t5m == "BULLISH" and t15m == "BULLISH" and th1 == "BULLISH":
-                                                alignment_bonus = 20
-                                            elif c_action == "SELL" and t3m == "BEARISH" and t5m == "BEARISH" and t15m == "BEARISH" and th1 == "BEARISH":
-                                                alignment_bonus = 20
-
-                                            adjusted_score = abs(c_audit["consensus_score"]) + alignment_bonus
-
-                                            symbol_candidates.append({
-                                                "symbol": symbol,
-                                                "action": c_action,
-                                                "audit": c_audit,
-                                                "adjusted_score": adjusted_score,
-                                                "closed_timeframe": closed_timeframe,
-                                                "closed_price": closed_price,
-                                                "candle_time": closed_candle_time_str,
-                                                "atr": atr,
-                                                "adx": adx
-                                            })
-            else:
-                symbol_state["signal"] = "HOLD / SCANNING"
-                symbol_state["decision_audit"] = {
-                    "regime": "SCANNING", "consensus_score": 0, "active_paths": [],
-                    "reasoning": f"Waiting for {primary_tf} and {confluence_tf} market data."
-                }
-
-        # if LIVE_TRADING_ENABLED and AUTO_TRADING_ENABLED and agent_status == "RUNNING" and symbol_candidates:
-        #     with auto_trade_lock:
-        #         account_state, bridge_status = mt5_bridge.account_snapshot()
-        #         if account_state is not None:
-        #             with mt5_state_lock:
-        #                 latest_mt5_account.update(account_state)
-        #                 latest_mt5_status.update(bridge_status)
-
-        #             risk_allowed, _ = check_daily_loss_limit(account_state)
-                    
-        #             all_positions = account_state.get("positions", [])
-        #             open_managed_positions = [p for p in all_positions if int(p.get("magic", 0)) == MT5_MAGIC_NUMBER]
-                    
-        #             if risk_allowed and len(open_managed_positions) < MAX_OPEN_POSITIONS and bridge_status.get("trade_allowed"):
-        #                 symbol_candidates.sort(key=lambda x: x["adjusted_score"], reverse=True)
-        #                 best_candidate = symbol_candidates[0]
-
-        #                 symbol = best_candidate["symbol"]
-        #                 symbol_market = account_state.get("symbols", {}).get(symbol, {})
-        #                 if symbol_market.get("available"):
-        #                     last_auto_evaluated_candle_times[symbol] = best_candidate["candle_time"]
-                            
-        #                     atr = best_candidate["atr"]
-        #                     adx = best_candidate["adx"]
-        #                     action = best_candidate["action"]
-        #                     closed_price = best_candidate["closed_price"]
-        #                     audit = best_candidate["audit"]
-
-        #                     base_sl_mult = profile["sl_atr_mult"]
-        #                     base_tp_mult = profile["tp_atr_mult"]
-        #                     atr_history = best_candidate["closed_timeframe"].get("atr_history", [atr])
-        #                     avg_atr = sum(atr_history[-20:]) / len(atr_history[-20:]) if atr_history else atr
-        #                     is_volatility_expansion = (adx > 30.0) or (avg_atr > 0 and (atr / avg_atr) > 1.3)
-
-        #                     sl_mult = base_sl_mult * 1.2 if is_volatility_expansion else base_sl_mult
-        #                     tp_mult = base_tp_mult * 1.2 if is_volatility_expansion else base_tp_mult
-
-        #                     import MetaTrader5 as mt5
-        #                     symbol_info = mt5.symbol_info(symbol)
-        #                     if symbol_info is not None:
-        #                         current_spread = symbol_info.spread * symbol_info.point
-        #                         max_allowed_spread = atr * 0.25
-        #                         if current_spread > max_allowed_spread:
-        #                             print(f"[SPREAD GUARD REJECT] Best candidate {symbol} spread ({current_spread:.3f}) exceeds max allowed ({max_allowed_spread:.3f}). Skipping.")
-        #                             return
-
-        #                     payload = {
-        #                         "symbol": symbol,
-        #                         "action": action,
-        #                         "risk_sized": True,
-        #                         "sl_distance": atr * sl_mult,
-        #                         "tp_distance": atr * tp_mult,
-        #                         "strategy_path": f"Style: {ACTIVE_TRADING_STYLE} | Regime: {audit['regime']} | Score: {audit['consensus_score']} | VolatilityExp: {is_volatility_expansion}"
-        #                     }
-
-        #                     succeeded, message, result = mt5_bridge.place_market_order(
-        #                         payload, MAX_RISK_PER_TRADE_PERCENT
-        #                     )
-        #                     if succeeded:
-        #                         ticket = result.get('order')
-        #                         volume = result.get('volume', 0.0)
-        #                         entry = float(result.get('price', closed_price))
-        #                         margin = float(result.get('margin', 0.0))
-        #                         active_trade_evolution_logs[ticket] = []
-        #                         log_trade_event(
-        #                             ticket=ticket,
-        #                             symbol=symbol,
-        #                             trading_style=ACTIVE_TRADING_STYLE,
-        #                             timeframe=primary_tf,
-        #                             action=action,
-        #                             regime=audit['regime'],
-        #                             score=audit['consensus_score'],
-        #                             strategies=audit['active_paths'],
-        #                             modifications=["Initial Order Placed (Global Portfolio & Spread Guard Armed)"],
-        #                             entry_price=entry,
-        #                             margin=margin,
-        #                             volume=volume,
-        #                             atr=atr,
-        #                             sl=entry - (atr * sl_mult) if action == "BUY" else entry + (atr * sl_mult),
-        #                             tp=entry + (tp_mult * atr) if action == "BUY" else entry - (tp_mult * atr),
-        #                             status="OPEN"
-        #                         )
-        #                         print(f"[{ACTIVE_TRADING_STYLE} BEST TRADE LOGGED] Ticket {ticket} | {action} {volume} lots on {symbol} (Score: {audit['consensus_score']})")
 
         default_state = symbol_states[DEFAULT_SYMBOL]
         for field in ("current_price", "signal", "cpr", "timeframes", "decision_audit"):
@@ -1459,7 +1281,6 @@ def broadcast_state_update():
     if disconnected:
         with state_lock:
             connected_ui_clients.difference_update(disconnected)
-
 class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
     def _send_json(self, status_code, response):
         self.send_response(status_code)

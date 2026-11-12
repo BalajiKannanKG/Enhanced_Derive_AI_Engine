@@ -18,7 +18,7 @@ import pandas as pd
 import pandas_ta as ta
 from mt5_bridge import MT5Bridge
 from websockets.sync.server import serve
-from compounding_challenge import CompoundingChallengeTracker
+from compounding_challenge_Old import CompoundingChallengeTracker
 ta_indicators: Any = cast(Any, ta)
 
 # --- Initialize tracker with institutional risk limits & 5% step growth ---

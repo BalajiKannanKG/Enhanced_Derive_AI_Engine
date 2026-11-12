@@ -184,8 +184,98 @@
     </div>
   </div>
 </div>
-
+<div class="card" id="open-positions-card" style="border: 1px solid var(--accent-yellow); margin-bottom: 6px;">
+  <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 4px; margin-bottom: 6px;">
+    <span style="font-weight: bold; font-size: 0.75rem; color: var(--accent-yellow);">📋 ACTIVE OPEN POSITIONS</span>
+    <span id="open-pos-count-badge" class="badge" style="background: rgba(245, 158, 11, 0.2); color: var(--accent-yellow);">0 Open</span>
+  </div>
+  <div id="open-positions-container" style="font-size: 0.65rem; color: var(--text-muted);">
+    No active positions running.
+  </div>
+</div>
 <script>
+
+function renderOpenPositionsPanel(mt5Account) {
+    const container = document.getElementById('open-positions-container');
+    const badge = document.getElementById('open-pos-count-badge');
+    
+    // Fallback across all possible response nesting structures
+    const positions = (mt5Account && Array.isArray(mt5Account.positions)) 
+        ? mt5Account.positions 
+        : (globalData && globalData.mt5_account && Array.isArray(globalData.mt5_account.positions)) 
+            ? globalData.mt5_account.positions 
+            : (globalData && Array.isArray(globalData.positions))
+                ? globalData.positions
+                : [];
+    
+    if (badge) badge.innerText = `${positions.length} Open`;
+
+    if (!container) return;
+
+    if (positions.length === 0) {
+        container.innerHTML = 'No active positions running.';
+        return;
+    }
+
+    let html = `
+        <div style="max-height: 120px; overflow-y: auto; overflow-x: hidden;">
+            <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                <thead>
+                    <tr style="border-bottom: 1px solid var(--border-color); color: var(--text-main); position: sticky; top: 0; background: var(--card-bg);">
+                        <th style="padding: 2px;">Ticket</th>
+                        <th style="padding: 2px;">Type</th>
+                        <th style="padding: 2px;">Vol</th>
+                        <th style="padding: 2px;">Entry</th>
+                        <th style="padding: 2px;">P/L</th>
+                        <th style="padding: 2px; text-align: right;">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+    `;
+    positions.forEach(pos => {
+        const pnl = Number(pos.profit || 0);
+        const pnlColor = pnl >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+        html += `
+            <tr style="border-bottom: 1px dashed var(--border-color);">
+                <td style="padding: 4px 3px; font-weight: bold;">#${pos.ticket}</td>
+                <td style="padding: 4px 3px; color: ${pos.type === 'BUY' ? 'var(--accent-green)' : 'var(--accent-red)'};">${pos.type}</td>
+                <td style="padding: 4px 3px;">${pos.volume}</td>
+                <td style="padding: 4px 3px;">${Number(pos.price).toFixed(3)}</td>
+                <td style="padding: 4px 3px; color: ${pnlColor}; font-weight: bold;">$${pnl.toFixed(2)}</td>
+                <td style="padding: 4px 3px; text-align: right;">
+                    <button onclick="closeTradeFromUI(${pos.ticket})" style="background: var(--accent-red); color: white; border: none; padding: 2px 6px; border-radius: 3px; cursor: pointer; font-size: 0.6rem; font-weight: bold;">✖ Close</button>
+                </td>
+            </tr>
+        `;
+    });
+
+    html += `</tbody></table>`;
+    container.innerHTML = html;
+}
+
+async function closeTradeFromUI(ticket) {
+    if (!window.confirm(`Are you sure you want to close trade #${ticket}?`)) return;
+
+    try {
+        const res = await fetch('/api/close-position', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ticket: ticket })
+        });
+        const result = await res.json();
+
+        if (res.ok) {
+            alert(`✅ Trade #${ticket} closed successfully.`);
+            fetchDashboardData();
+        } else {
+            alert(`❌ Failed to close trade: ${result.message}`);
+        }
+    } catch (e) {
+        alert("Could not reach the local server to close the trade.");
+    }
+}
+
+let isDraggingActive = false;
 function updateChallengeUI(data) {
   if (!data) return;
   document.getElementById('chal-day-step').innerText = 'Day ' + (data.day_number || 1);
@@ -201,15 +291,16 @@ function updateChallengeUI(data) {
   document.getElementById('chal-dd-limit').innerText = '$' + Number(data.max_drawdown_limit || (startBal * 0.97)).toFixed(2);
   document.getElementById('chal-target-val').innerText = '$' + Number(data.target_balance || (startBal * 1.05)).toFixed(2);
   
-  // Trade breakdown metrics
   document.getElementById('chal-total-trades').innerText = data.total_trades || 0;
   document.getElementById('chal-auto-manual').innerText = `${data.auto_trades || 0} / ${data.manual_trades || 0}`;
-  document.getElementById('chal-win-rate').innerText = (Number(data.win_rate || 0)).toFixed(1) + '%';
   
-  const returnPct = startBal > 0 ? ((currentBal - startBal) / startBal) * 100 : 0;
+  const totalWR = Number(data.win_rate || 0);
+  document.getElementById('chal-win-rate').innerText = `${totalWR.toFixed(1)}%`;
+
+  const totalRet = Number(data.total_return_pct || ((currentBal - startBal) / startBal) * 100);
   const returnEl = document.getElementById('chal-return-pct');
-  returnEl.innerText = (returnPct >= 0 ? '+' : '') + returnPct.toFixed(1) + '%';
-  returnEl.style.color = returnPct >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+  returnEl.innerText = `${totalRet >= 0 ? '+' : ''}${totalRet.toFixed(1)}%`;
+  returnEl.style.color = totalRet >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';  
 
   const progress = Number(data.progress_pct || data.step_progress || 0);
   document.getElementById('chal-progress-pct').innerText = progress.toFixed(1) + '%';
@@ -218,17 +309,6 @@ function updateChallengeUI(data) {
   const status = data.status || 'ACTIVE';
   const badge = document.getElementById('challenge-status-badge');
   badge.innerText = status;
-  
-  if (status.includes('HALTED') || status.includes('BREACH')) {
-    badge.style.background = 'rgba(239, 68, 68, 0.2)';
-    badge.style.color = 'var(--accent-red)';
-  } else if (status.includes('CIRCUIT')) {
-    badge.style.background = 'rgba(245, 158, 11, 0.2)';
-    badge.style.color = 'var(--accent-yellow)';
-  } else {
-    badge.style.background = 'rgba(16, 185, 129, 0.2)';
-    badge.style.color = 'var(--accent-green)';
-  }
 }
 </script>
 </script>
@@ -273,29 +353,23 @@ function updateChallengeUI(data) {
 
             </div>
 
-            <div class="card prediction-panel">
-                <h3>🔮 S/R Proximity & Open/Close Forecast</h3>
-                <div id="sr-alert-box" class="sr-alert-pill">Scanning S/R...</div>
-                <div class="forecast-summary">
-                    <div class="metric-row"><span>Target:</span> <span class="metric-value" id="pred-target" style="color:var(--accent-cyan);">---</span></div>
-                    <div class="metric-row"><span>Distance:</span> <span class="metric-value" id="pred-distance">---</span></div>
-                </div>
-                
-                <div class="forecast-grid" id="forecast-container">
-                    <div class="forecast-box"><div class="forecast-step">T+1</div><canvas width="32" height="22"></canvas><div class="forecast-pattern">Loading...</div></div>
-                    <div class="forecast-box"><div class="forecast-step">T+2</div><canvas width="32" height="22"></canvas><div class="forecast-pattern">Loading...</div></div>
-                    <div class="forecast-box"><div class="forecast-step">T+3</div><canvas width="32" height="22"></canvas><div class="forecast-pattern">Loading...</div></div>
-                </div>
+          <!-- Hidden forecast container to prevent JS reference errors -->
+            <div style="display: none;">
+                <div id="sr-alert-box"></div>
+                <div id="pred-target"></div>
+                <div id="pred-distance"></div>
+                <div id="forecast-container"></div>
             </div>
+            <!-- Decision Audit & Strategy Reasoning Card -->
             <!-- Decision Audit & Strategy Reasoning Card -->
             <div class="card decision-audit-card" style="border-color: var(--accent-cyan);">
                 <h3>🎯 Strategy Audit & Reasoning</h3>
                 <div class="metric-row"><span>Market Regime:</span> <span class="metric-value" id="audit-regime" style="color:var(--accent-cyan);">---</span></div>
                 <div class="metric-row"><span>Consensus Score:</span> <span class="metric-value" id="audit-score">0</span></div>
-                <div style="font-size: 0.6rem; color: var(--text-muted); margin-top: 3px;">Active Paths & Trap Fades:</div>
-                <div id="audit-paths" class="pill-container" style="font-size: 0.62rem; font-weight: bold; color: var(--accent-yellow); min-height: 18px; margin-bottom: 2px;">Scanning active paths...</div>
+                <div style="font-size: 0.6rem; color: var(--text-muted); margin-top: 2px;">Active Paths & Trap Fades:</div>
+                <div id="audit-paths" class="pill-container" style="font-size: 0.62rem; font-weight: bold; color: var(--accent-yellow); min-height: 16px; margin-bottom: 2px;">Scanning active paths...</div>
                 <div style="font-size: 0.58rem; color: var(--text-muted);">Reasoning:</div>
-                <div id="audit-reasoning" style="font-size: 0.6rem; background: rgba(0,0,0,0.03); border: 1px solid var(--border-color); padding: 3px; border-radius: 3px; max-height: 35px; overflow-y: auto;">Initializing decision matrix...</div>
+                <div id="audit-reasoning" style="font-size: 0.6rem; background: rgba(0,0,0,0.03); border: 1px solid var(--border-color); padding: 3px; border-radius: 3px; height: auto; max-height: none; overflow-y: visible;">Initializing decision matrix...</div>
             </div>
             <!-- Confluence Matrix & Manual Controls -->
             <div class="card confluence-panel" style="border-color: var(--accent-purple);">
@@ -913,7 +987,6 @@ function updateChallengeUI(data) {
                 capitalInput.value = balance.toFixed(2);
             }
 
-            // --- Updated Portfolio Lock Badge Update ---
             const openPositionsList = account.positions || [];
             const maxPosLimit = data.max_open_positions || 1;
             const portfolioBadge = document.getElementById('portfolio-lock-badge');
@@ -926,6 +999,9 @@ function updateChallengeUI(data) {
                     portfolioBadge.className = 'badge badge-success';
                 }
             }
+
+            // ADD THIS LINE HERE:
+            renderOpenPositionsPanel(account);
         }
 
         function renderTradingMode(data) {
@@ -1493,40 +1569,150 @@ function updateChallengeUI(data) {
 
         Chart.register(solidCandlePlugin);
 
-        function setupInteractiveCanvasClick() {
-            const canvas = document.getElementById('priceChart');
-            if (!canvas) return;
+        let activeDraggedLine = null; // Can be { type: 'TP'/'SL', ticket: ... }
+let dragStartClientY = 0;
+let hasActuallyDragged = false;
 
-            canvas.onclick = function(e) {
-                if (!priceChartInstance) return;
+function setupInteractiveCanvas() {
+    const canvas = document.getElementById('priceChart');
+    if (!canvas || !priceChartInstance) return;
 
-                const rect = canvas.getBoundingClientRect();
-                const clickY = e.clientY - rect.top;
+    canvas.addEventListener('mousedown', function(e) {
+        const rect = canvas.getBoundingClientRect();
+        const clickY = e.clientY - rect.top;
+        const chartArea = priceChartInstance.chartArea;
+        
+        if (!chartArea || clickY < chartArea.top || clickY > chartArea.bottom) return;
 
-                const chartArea = priceChartInstance.chartArea;
-                if (!chartArea || clickY < chartArea.top || clickY > chartArea.bottom) return;
+        const yAxis = priceChartInstance.scales.y;
+        dragStartClientY = e.clientY;
+        hasActuallyDragged = false;
 
-                const yAxis = priceChartInstance.scales.y;
-                const clickedPrice = yAxis.getValueForPixel(clickY);
-
-                let deleteIdx = -1;
-                for (let i = 0; i < drawnHorizontalLines.length; i++) {
-                    const lineY = yAxis.getPixelForValue(drawnHorizontalLines[i]);
-                    if (Math.abs(clickY - lineY) <= 6) {
-                        deleteIdx = i;
-                        break;
-                    }
-                }
-
-                if (deleteIdx !== -1) {
-                    drawnHorizontalLines.splice(deleteIdx, 1);
-                } else {
-                    drawnHorizontalLines.push(clickedPrice);
-                }
-
-                priceChartInstance.update('none');
-            };
+        // 1. Check if clicking near an existing TP or SL line to drag
+        const mt5Acc = globalData && globalData.mt5_account ? globalData.mt5_account : {};
+        const positions = mt5Acc.positions || [];
+        
+        activeDraggedLine = null;
+        for (const pos of positions) {
+            if (pos.tp && Math.abs(yAxis.getPixelForValue(pos.tp) - clickY) <= 8) {
+                activeDraggedLine = { type: 'TP', ticket: pos.ticket, price: pos.tp };
+                return;
+            }
+            if (pos.sl && Math.abs(yAxis.getPixelForValue(pos.sl) - clickY) <= 8) {
+                activeDraggedLine = { type: 'SL', ticket: pos.ticket, price: pos.sl };
+                return;
+            }
         }
+    });
+
+    canvas.addEventListener('mousemove', function(e) {
+        if (!activeDraggedLine) return;
+
+        // If mouse moves more than 4 pixels, consider it a drag action
+        if (Math.abs(e.clientY - dragStartClientY) > 4) {
+            hasActuallyDragged = true;
+        }
+
+        if (!hasActuallyDragged) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const moveY = e.clientY - rect.top;
+        const yAxis = priceChartInstance.scales.y;
+        const newPrice = yAxis.getValueForPixel(moveY);
+
+        const mt5Acc = globalData && globalData.mt5_account ? globalData.mt5_account : {};
+        const positions = mt5Acc.positions || [];
+        const pos = positions.find(p => p.ticket === activeDraggedLine.ticket);
+        if (pos) {
+            if (activeDraggedLine.type === 'TP') pos.tp = newPrice;
+            if (activeDraggedLine.type === 'SL') pos.sl = newPrice;
+            priceChartInstance.update('none');
+        }
+    });
+
+    window.addEventListener('mouseup', async function() {
+        if (!activeDraggedLine) return;
+
+        const dragged = activeDraggedLine;
+        const didDrag = hasActuallyDragged;
+        activeDraggedLine = null;
+        hasActuallyDragged = false;
+
+        if (!didDrag) return; // If it wasn't dragged, let click handler manage it
+
+        const mt5Acc = globalData && globalData.mt5_account ? globalData.mt5_account : {};
+        const positions = mt5Acc.positions || [];
+        const pos = positions.find(p => p.ticket === dragged.ticket);
+        
+        if (pos) {
+            const newTp = pos.tp;
+            const newSl = pos.sl;
+
+            const confirmed = window.confirm(`Modify Trade #${dragged.ticket} ${dragged.type} to ${dragged.type === 'TP' ? newTp.toFixed(3) : newSl.toFixed(3)}?`);
+            if (confirmed) {
+                try {
+                    const res = await fetch('/api/modify-position', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ticket: dragged.ticket, sl: newSl, tp: newTp })
+                    });
+                    const result = await res.json();
+                    if (!res.ok) {
+                        alert(`Failed to update ${dragged.type}: ${result.message}`);
+                        fetchDashboardData();
+                    }
+                } catch (err) {
+                    alert('Error communicating with trade server.');
+                    fetchDashboardData();
+                }
+            } else {
+                fetchDashboardData();
+            }
+        }
+    });
+
+    // 2. Standard Click Handler for Custom Lines (Creation / Deletion)
+    canvas.onclick = function(e) {
+        if (hasActuallyDragged) return; // Skip if a drag just occurred
+
+        const rect = canvas.getBoundingClientRect();
+        const clickY = e.clientY - rect.top;
+        const chartArea = priceChartInstance.chartArea;
+        if (!chartArea || clickY < chartArea.top || clickY > chartArea.bottom) return;
+
+        const yAxis = priceChartInstance.scales.y;
+        const clickPrice = yAxis.getValueForPixel(clickY);
+
+        // Check if clicked near an existing trade line; skip custom line creation if so
+        const mt5Acc = globalData && globalData.mt5_account ? globalData.mt5_account : {};
+        const positions = mt5Acc.positions || [];
+        for (const pos of positions) {
+            if ((pos.tp && Math.abs(yAxis.getPixelForValue(pos.tp) - clickY) <= 8) ||
+                (pos.sl && Math.abs(yAxis.getPixelForValue(pos.sl) - clickY) <= 8) ||
+                (pos.price && Math.abs(yAxis.getPixelForValue(pos.price) - clickY) <= 8)) {
+                return;
+            }
+        }
+
+        // Check if clicking near an existing custom drawn line to delete it
+        let deleteIdx = -1;
+        for (let i = 0; i < drawnHorizontalLines.length; i++) {
+            const lineY = yAxis.getPixelForValue(drawnHorizontalLines[i]);
+            if (Math.abs(clickY - lineY) <= 6) {
+                deleteIdx = i;
+                break;
+            }
+        }
+
+        if (deleteIdx !== -1) {
+            drawnHorizontalLines.splice(deleteIdx, 1);
+        } else {
+            drawnHorizontalLines.push(clickPrice);
+        }
+
+        priceChartInstance.update('none');
+    };
+}
 
         function renderSelectedTimeframe() {
             if (!globalData) return;
@@ -1726,7 +1912,7 @@ function updateChallengeUI(data) {
                         }
                     }
                 });
-                setupInteractiveCanvasClick();
+                setupInteractiveCanvas();
             } else {
                 priceChartInstance.data.labels = labels;
                 priceChartInstance.data.datasets[0].data = closes;

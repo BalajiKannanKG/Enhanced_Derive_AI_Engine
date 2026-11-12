@@ -261,30 +261,43 @@ h1 {
 .right-column {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 3px;
     height: 100% !important;
     min-height: 0 !important;
-    overflow: hidden !important;
+    overflow-y: auto !important;
+    padding-right: 2px;
 }
 
+/* Let all right-column cards size naturally based on their contents */
 .right-column > .card {
-    min-height: 0 !important;
-    overflow: hidden !important;
-    padding: 2px 3px !important;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
+    flex: 0 0 auto !important;
+    min-height: min-content !important;
+    overflow: visible !important;
+    padding: 3px 4px !important;
 }
 
-#compounding-challenge-card { flex: 1.4 !important; } /* Expanded to fully show 2nd row details */
-.prediction-panel { flex: 0.9 !important; }
-.decision-audit-card { 
-    flex: 1.4 !important; /* Increased weight so it expands fully */
-    overflow: hidden !important;
+#compounding-challenge-card { 
+    flex: 2.8 !important; 
+    overflow: visible !important; 
 }
 
 
-.confluence-panel { flex: 2.0 !important; }
+/* Specific inner containers adjustments */
+#open-positions-container {
+    max-height: 110px;
+    overflow-y: auto;
+}
+
+#audit-reasoning { 
+    font-size: 0.55rem !important; 
+    padding: 2px 3px !important; 
+    max-height: none !important; 
+    height: auto !important;
+    overflow-y: visible !important; 
+    line-height: 0.8rem !important;
+}
+.decision-audit-card { flex: 1.6 !important; overflow: hidden !important; }
+.confluence-panel { flex: 2.5 !important; }
 
 .card {
     border: 1px solid var(--border-color);
@@ -459,13 +472,6 @@ h1 {
     margin-top: 1px;
 }
 
-#audit-reasoning { 
-    font-size: 0.55rem !important; 
-    padding: 2px 3px !important; 
-    max-height: none !important; /* Removes height restriction */
-    height: auto !important;
-    overflow: visible !important; 
-    line-height: 0.8rem !important;
-}
+
 .right-column .metric-row { margin: 0px !important; font-size: 0.5rem !important; font-weight: bold !important; }
 [hidden] { display: none !important; }

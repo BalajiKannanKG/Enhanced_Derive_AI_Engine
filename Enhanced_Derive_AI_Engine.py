@@ -349,6 +349,7 @@ def process_dataframe(df, symbol: str = DEFAULT_SYMBOL):
     df['ema200'] = ta_indicators.ema(df['close'], length=200)
     df['rsi'] = ta_indicators.rsi(df['close'], length=14)
     df['atr'] = ta_indicators.atr(df['high'], df['low'], df['close'], length=14)
+    df['ema50'] = ta_indicators.ema(df['close'], length=50)
     
     adx_df = ta_indicators.adx(df['high'], df['low'], df['close'], length=14)
     df['adx'] = adx_df['ADX_14'] if adx_df is not None and not adx_df.empty else 20.0
@@ -425,7 +426,11 @@ def process_dataframe(df, symbol: str = DEFAULT_SYMBOL):
         "stoch_k_history": [round(x, 1) for x in tail_df['stoch_k'].fillna(50).tolist()],
         "stoch_d_history": [round(x, 1) for x in tail_df['stoch_d'].fillna(50).tolist()],
         "prev_day_open": round(prev_open, 3),
-        "prev_day_close": round(prev_close, 3)
+        "prev_day_close": round(prev_close, 3),
+        "ema50": round(float(latest['ema50'] if pd.notna(latest['ema50']) else close_val), 3),
+        "ema50_history": [round(x, 3) for x in tail_df['ema50'].fillna(close_val).tolist()],
+        "ema200": round(float(latest['ema200'] if pd.notna(latest['ema200']) else close_val), 3),
+        "ema200_history": [round(x, 3) for x in tail_df['ema200'].fillna(close_val).tolist()]
     }
 def check_and_sync_closed_telemetry_trades():
     """Polls MT5 history to update closed trades in trade_telemetry and compounding challenge."""
@@ -787,176 +792,176 @@ def evaluate_multi_path_strategy(
 
     return action, audit
 
-# def check_and_auto_trigger_trade(agent_state, symbol: str = DEFAULT_SYMBOL):
-#     profile = CURRENT_PROFILE
-#     primary_tf = profile["primary_tf"]
-#     confluence_tf = profile["confluence_tf"]
+def check_and_auto_trigger_trade(agent_state, symbol: str = DEFAULT_SYMBOL):
+    profile = CURRENT_PROFILE
+    primary_tf = profile["primary_tf"]
+    confluence_tf = profile["confluence_tf"]
 
-#     timeframes = agent_state.get("timeframes", {})
-#     tf_data = timeframes.get(primary_tf, {})
-#     higher_tf_data = timeframes.get(confluence_tf, {})
-#     market_price = agent_state.get("current_price", 0.0)
+    timeframes = agent_state.get("timeframes", {})
+    tf_data = timeframes.get(primary_tf, {})
+    higher_tf_data = timeframes.get(confluence_tf, {})
+    market_price = agent_state.get("current_price", 0.0)
 
-#     if market_price <= 0 or not tf_data or not higher_tf_data:
-#         agent_state["signal"] = "HOLD / SCANNING"
-#         agent_state["decision_audit"] = {
-#             "regime": "SCANNING",
-#             "consensus_score": 0,
-#             "active_paths": [],
-#             "reasoning": f"Waiting for {primary_tf} and {confluence_tf} market data."
-#         }
-#         return
+    if market_price <= 0 or not tf_data or not higher_tf_data:
+        agent_state["signal"] = "HOLD / SCANNING"
+        agent_state["decision_audit"] = {
+            "regime": "SCANNING",
+            "consensus_score": 0,
+            "active_paths": [],
+            "reasoning": f"Waiting for {primary_tf} and {confluence_tf} market data."
+        }
+        return
 
-#     action, audit = evaluate_multi_path_strategy(
-#         tf_data,
-#         higher_tf_data,
-#         market_price,
-#         agent_state.get("cpr", {}),
-#         timeframes,
-#     )
-#     agent_state["signal"] = action or "HOLD / SCANNING"
-#     agent_state["decision_audit"] = audit
+    action, audit = evaluate_multi_path_strategy(
+        tf_data,
+        higher_tf_data,
+        market_price,
+        agent_state.get("cpr", {}),
+        timeframes,
+    )
+    agent_state["signal"] = action or "HOLD / SCANNING"
+    agent_state["decision_audit"] = audit
 
-#     if not LIVE_TRADING_ENABLED or not AUTO_TRADING_ENABLED or agent_status != "RUNNING":
-#         return
+    if not LIVE_TRADING_ENABLED or not AUTO_TRADING_ENABLED or agent_status != "RUNNING":
+        return
 
-#     if not tf_data.get("data_ready") or not higher_tf_data.get("data_ready"):
-#         return
+    if not tf_data.get("data_ready") or not higher_tf_data.get("data_ready"):
+        return
 
-#     candles = tf_data.get("candles", [])
-#     if len(candles) < 2:
-#         return
+    candles = tf_data.get("candles", [])
+    if len(candles) < 2:
+        return
 
-#     closed_timeframe = dict(tf_data)
-#     closed_timeframe["candles"] = candles[:-1]
-#     history_fields = (
-#         "bb_upper", "bb_middle", "bb_lower", "ema20_history", "ema30_history",
-#         "ema100_history", "atr_history", "adx_history", "rsi_history",
-#         "stoch_k_history", "stoch_d_history",
-#     )
-#     for field in history_fields:
-#         values = tf_data.get(field)
-#         if not isinstance(values, list) or len(values) != len(candles):
-#             return
-#         closed_timeframe[field] = values[:-1]
+    closed_timeframe = dict(tf_data)
+    closed_timeframe["candles"] = candles[:-1]
+    history_fields = (
+        "bb_upper", "bb_middle", "bb_lower", "ema20_history", "ema30_history",
+        "ema100_history", "atr_history", "adx_history", "rsi_history",
+        "stoch_k_history", "stoch_d_history",
+    )
+    for field in history_fields:
+        values = tf_data.get(field)
+        if not isinstance(values, list) or len(values) != len(candles):
+            return
+        closed_timeframe[field] = values[:-1]
 
-#     closed_indicators = {
-#         "ema20": "ema20_history",
-#         "atr": "atr_history",
-#         "adx": "adx_history",
-#         "rsi": "rsi_history",
-#     }
-#     for field, history in closed_indicators.items():
-#         closed_timeframe[field] = closed_timeframe[history][-1]
-#     closed_price = float(closed_timeframe["candles"][-1]["close"])
-#     closed_candle_time = closed_timeframe["candles"][-1].get("time")
-#     if closed_candle_time is None:
-#         return
+    closed_indicators = {
+        "ema20": "ema20_history",
+        "atr": "atr_history",
+        "adx": "adx_history",
+        "rsi": "rsi_history",
+    }
+    for field, history in closed_indicators.items():
+        closed_timeframe[field] = closed_timeframe[history][-1]
+    closed_price = float(closed_timeframe["candles"][-1]["close"])
+    closed_candle_time = closed_timeframe["candles"][-1].get("time")
+    if closed_candle_time is None:
+        return
 
-#     closed_candle_time = str(closed_candle_time)
-#     previous_candle_time = last_auto_evaluated_candle_times.get(symbol)
-#     if previous_candle_time is None:
-#         last_auto_evaluated_candle_times[symbol] = closed_candle_time
-#         return
-#     if closed_candle_time == previous_candle_time:
-#         return
-#     last_auto_evaluated_candle_times[symbol] = closed_candle_time
+    closed_candle_time = str(closed_candle_time)
+    previous_candle_time = last_auto_evaluated_candle_times.get(symbol)
+    if previous_candle_time is None:
+        last_auto_evaluated_candle_times[symbol] = closed_candle_time
+        return
+    if closed_candle_time == previous_candle_time:
+        return
+    last_auto_evaluated_candle_times[symbol] = closed_candle_time
 
-#     decision_timeframes = dict(timeframes)
-#     decision_timeframes[primary_tf] = closed_timeframe
-#     action, audit = evaluate_multi_path_strategy(
-#         closed_timeframe,
-#         higher_tf_data,
-#         closed_price,
-#         agent_state.get("cpr", {}),
-#         decision_timeframes,
-#     )
-#     agent_state["decision_audit"] = audit
-#     if not action:
-#         return
+    decision_timeframes = dict(timeframes)
+    decision_timeframes[primary_tf] = closed_timeframe
+    action, audit = evaluate_multi_path_strategy(
+        closed_timeframe,
+        higher_tf_data,
+        closed_price,
+        agent_state.get("cpr", {}),
+        decision_timeframes,
+    )
+    agent_state["decision_audit"] = audit
+    if not action:
+        return
 
-#     atr = float(closed_timeframe["atr"])
-#     adx = float(closed_timeframe["adx"])
-#     if not math.isfinite(atr) or atr <= 0:
-#         return
+    atr = float(closed_timeframe["atr"])
+    adx = float(closed_timeframe["adx"])
+    if not math.isfinite(atr) or atr <= 0:
+        return
 
-#     base_sl_mult = profile["sl_atr_mult"]
-#     base_tp_mult = profile["tp_atr_mult"]
-#     atr_history = closed_timeframe.get("atr_history", [atr])
-#     avg_atr = sum(atr_history[-20:]) / len(atr_history[-20:]) if atr_history else atr
-#     is_volatility_expansion = (adx > 30.0) or (avg_atr > 0 and (atr / avg_atr) > 1.3)
+    base_sl_mult = profile["sl_atr_mult"]
+    base_tp_mult = profile["tp_atr_mult"]
+    atr_history = closed_timeframe.get("atr_history", [atr])
+    avg_atr = sum(atr_history[-20:]) / len(atr_history[-20:]) if atr_history else atr
+    is_volatility_expansion = (adx > 30.0) or (avg_atr > 0 and (atr / avg_atr) > 1.3)
 
-#     sl_mult = base_sl_mult * 1.2 if is_volatility_expansion else base_sl_mult
-#     tp_mult = base_tp_mult * 1.2 if is_volatility_expansion else base_tp_mult
+    sl_mult = base_sl_mult * 1.2 if is_volatility_expansion else base_sl_mult
+    tp_mult = base_tp_mult * 1.2 if is_volatility_expansion else base_tp_mult
 
-#     payload = {
-#         "symbol": symbol,
-#         "action": action,
-#         "risk_sized": True,
-#         "sl_distance": atr * sl_mult,
-#         "tp_distance": atr * tp_mult,
-#         "strategy_path": f"Style: {ACTIVE_TRADING_STYLE} | Regime: {audit['regime']} | Score: {audit['consensus_score']} | VolatilityExp: {is_volatility_expansion}"
-#     }
+    payload = {
+        "symbol": symbol,
+        "action": action,
+        "risk_sized": True,
+        "sl_distance": atr * sl_mult,
+        "tp_distance": atr * tp_mult,
+        "strategy_path": f"Style: {ACTIVE_TRADING_STYLE} | Regime: {audit['regime']} | Score: {audit['consensus_score']} | VolatilityExp: {is_volatility_expansion}"
+    }
 
-#     with auto_trade_lock:
-#         account_state, bridge_status = mt5_bridge.account_snapshot()
-#         if account_state is None:
-#             return
-#         with mt5_state_lock:
-#             latest_mt5_account.update(account_state)
-#             latest_mt5_status.update(bridge_status)
+    with auto_trade_lock:
+        account_state, bridge_status = mt5_bridge.account_snapshot()
+        if account_state is None:
+            return
+        with mt5_state_lock:
+            latest_mt5_account.update(account_state)
+            latest_mt5_status.update(bridge_status)
 
-#         risk_allowed, _ = check_daily_loss_limit(account_state)
-#         if not risk_allowed:
-#             return
+        risk_allowed, _ = check_daily_loss_limit(account_state)
+        if not risk_allowed:
+            return
             
-#         all_positions = account_state.get("positions", [])
-#         open_managed_positions = [p for p in all_positions if int(p.get("magic", 0)) == MT5_MAGIC_NUMBER]
-#         if len(open_managed_positions) >= MAX_OPEN_POSITIONS or not bridge_status.get("trade_allowed"):
-#             return
+        all_positions = account_state.get("positions", [])
+        open_managed_positions = [p for p in all_positions if int(p.get("magic", 0)) == MT5_MAGIC_NUMBER]
+        if len(open_managed_positions) >= MAX_OPEN_POSITIONS or not bridge_status.get("trade_allowed"):
+            return
 
-#         symbol_market = account_state.get("symbols", {}).get(symbol, {})
-#         if not symbol_market.get("available"):
-#             return
+        symbol_market = account_state.get("symbols", {}).get(symbol, {})
+        if not symbol_market.get("available"):
+            return
 
-#         import MetaTrader5 as mt5
-#         symbol_info = mt5.symbol_info(symbol)
-#         if symbol_info is not None:
-#             current_spread = symbol_info.spread * symbol_info.point
-#             max_allowed_spread = atr * 0.25
-#             if current_spread > max_allowed_spread:
-#                 print(f"[SPREAD GUARD REJECT] {symbol} spread ({current_spread:.3f}) exceeds max allowed ({max_allowed_spread:.3f}).")
-#                 return
+        import MetaTrader5 as mt5
+        symbol_info = mt5.symbol_info(symbol)
+        if symbol_info is not None:
+            current_spread = symbol_info.spread * symbol_info.point
+            max_allowed_spread = atr * 0.25
+            if current_spread > max_allowed_spread:
+                print(f"[SPREAD GUARD REJECT] {symbol} spread ({current_spread:.3f}) exceeds max allowed ({max_allowed_spread:.3f}).")
+                return
 
-#         succeeded, message, result = mt5_bridge.place_market_order(
-#             payload, MAX_RISK_PER_TRADE_PERCENT
-#         )
+        succeeded, message, result = mt5_bridge.place_market_order(
+            payload, MAX_RISK_PER_TRADE_PERCENT
+        )
     
-#     if succeeded:
-#         ticket = result.get('order')
-#         volume = result.get('volume', 0.0)
-#         entry = float(result.get('price', closed_price))
-#         margin = float(result.get('margin', 0.0))
-#         active_trade_evolution_logs[ticket] = []
-#         log_trade_event(
-#             ticket=ticket,
-#             symbol=symbol,
-#             trading_style=ACTIVE_TRADING_STYLE,
-#             timeframe=primary_tf,
-#             action=action,
-#             regime=audit['regime'],
-#             score=audit['consensus_score'],
-#             strategies=audit['active_paths'],
-#             modifications=[f"Initial Style-Profiled Order Placed (Dynamic ATR Mult: {sl_mult:.2f})"],
-#             entry_price=entry,
-#             margin=margin,
-#             volume=volume,
-#             atr=atr,
-#             sl=entry - (atr * sl_mult) if action == "BUY" else entry + (atr * sl_mult),
-#             tp=entry + (tp_mult * atr) if action == "BUY" else entry - (tp_mult * atr),
-#             status="OPEN"
-#         )
-#         print(f"[{ACTIVE_TRADING_STYLE} TRADE LOGGED] Ticket {ticket} | {action} {volume} lots on {symbol}")
+    if succeeded:
+        ticket = result.get('order')
+        volume = result.get('volume', 0.0)
+        entry = float(result.get('price', closed_price))
+        margin = float(result.get('margin', 0.0))
+        active_trade_evolution_logs[ticket] = []
+        log_trade_event(
+            ticket=ticket,
+            symbol=symbol,
+            trading_style=ACTIVE_TRADING_STYLE,
+            timeframe=primary_tf,
+            action=action,
+            regime=audit['regime'],
+            score=audit['consensus_score'],
+            strategies=audit['active_paths'],
+            modifications=[f"Initial Style-Profiled Order Placed (Dynamic ATR Mult: {sl_mult:.2f})"],
+            entry_price=entry,
+            margin=margin,
+            volume=volume,
+            atr=atr,
+            sl=entry - (atr * sl_mult) if action == "BUY" else entry + (atr * sl_mult),
+            tp=entry + (tp_mult * atr) if action == "BUY" else entry - (tp_mult * atr),
+            status="OPEN"
+        )
+        print(f"[{ACTIVE_TRADING_STYLE} TRADE LOGGED] Ticket {ticket} | {action} {volume} lots on {symbol}")
 
 def manage_active_trades(agent_state):
     """Advanced active trade manager utilizing profile scale-outs, stagnation cuts, and Chandelier Trailing Stops."""
@@ -1097,11 +1102,20 @@ def mt5_monitor_loop():
     last_history_attempt = 0.0
     while True:
         refresh_mt5_state()
-        check_and_sync_closed_telemetry_trades()  # <-- Syncs trade_telemetry & challenge db
+        check_and_sync_closed_telemetry_trades()  # Syncs trade_telemetry & challenge db
+        
         try:
-            compounding_challenge.sync_closed_challenge_trades() # <-- Ensure challenge trades sync
-        except Exception:
-            pass
+            # Explicitly synchronize and evaluate challenge metrics against live account balance
+            compounding_challenge.sync_closed_challenge_trades()
+            
+            with mt5_state_lock:
+                current_acct_balance = float(latest_mt5_account.get("balance", 200.0))
+                current_acct_equity = float(latest_mt5_account.get("equity", current_acct_balance))
+            
+            tracker = compounding_challenge.CompoundingChallengeTracker(initial_capital=current_acct_balance)
+            tracker.evaluate_day(simulated_pnl=current_acct_equity - current_acct_balance)
+        except Exception as e:
+            print(f"Background challenge evaluation/sync error: {e}")
         
         now = time.monotonic()
         if not history_loaded and now - last_history_attempt >= 60:
@@ -1201,18 +1215,16 @@ def broadcast_state_update():
 
             if challenge_metrics.get("halt_trading", False):
                 AUTO_TRADING_ENABLED = False
-                           
-            # Extract live account equity from MT5 snapshot (fallback to 200.0 if empty)
-            account_equity = float(mt5_account_data.get("equity", 100111.59))
-            account_balance = float(mt5_account_data.get("balance", 100111.59))
 
-            # Evaluate or sync challenge tracker using actual live balance/equity
+            # Load balance strictly from the database challenge status
+            db_starting_bal = float(challenge_metrics.get("starting_balance", 200.00))
+            db_current_bal = float(challenge_metrics.get("current_balance", 200.00))
+
             try:
-                challenge_tracker = compounding_challenge.CompoundingChallengeTracker(initial_capital=account_balance)
-                # If starting fresh or syncing with live balance:
-                challenge_metrics = challenge_tracker.evaluate_day(simulated_pnl=account_equity - account_balance)
+                challenge_tracker = compounding_challenge.CompoundingChallengeTracker(initial_capital=db_starting_bal)
+                challenge_tracker.state["current_balance"] = db_current_bal
+                challenge_metrics = challenge_tracker.evaluate_day(simulated_pnl=0.0)
                 
-                # Pull cumulative challenge stats (win rate, trade counts) from DB
                 full_status = compounding_challenge.get_current_challenge_status()
                 full_status.update(challenge_metrics)
                 challenge_metrics = full_status
@@ -1224,28 +1236,47 @@ def broadcast_state_update():
                 AUTO_TRADING_ENABLED = False
 
         symbol_states = {}
+        profile = CURRENT_PROFILE
+        primary_tf = profile["primary_tf"]
+        confluence_tf = profile["confluence_tf"]
+
         for symbol, caches in symbol_tf_caches.items():
             timeframes_dict = {}
             for timeframe, df in caches.items():
                 timeframes_dict[timeframe] = process_dataframe(df, symbol)
             daily_df = caches.get("d1")
+            cpr = calculate_cpr(daily_df)
+            
+            sym_price = current_prices.get(symbol, 0.0)
+            tf_data = timeframes_dict.get(primary_tf, {})
+            higher_tf_data = timeframes_dict.get(confluence_tf, {})
+            
+            action, audit = "HOLD / SCANNING", {
+                "regime": "SCANNING",
+                "consensus_score": 0,
+                "active_paths": [],
+                "reasoning": "Waiting for market data."
+            }
+            if sym_price > 0 and tf_data and higher_tf_data:
+                action_eval, audit_eval = evaluate_multi_path_strategy(
+                    tf_data, higher_tf_data, sym_price, cpr, timeframes_dict
+                )
+                if action_eval:
+                    action = action_eval
+                if audit_eval:
+                    audit = audit_eval
+
             symbol_states[symbol] = {
                 "symbol": symbol,
                 "market_data_symbol": symbol,
                 "market_data_source": "MT5",
-                "current_price": current_prices.get(symbol, 0.0),
-                "signal": "HOLD / SCANNING",
-                "cpr": calculate_cpr(daily_df),
+                "current_price": sym_price,
+                "signal": action,
+                "cpr": cpr,
                 "timeframes": timeframes_dict,
-                "decision_audit": {
-                    "regime": "SCANNING",
-                    "consensus_score": 0,
-                    "active_paths": [],
-                    "reasoning": "Waiting for market data."
-                },
+                "decision_audit": audit,
                 "mt5_symbol": mt5_account_data.get("symbols", {}).get(symbol, {}),
             }
-
         state_data = {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "agent_status": agent_status,
@@ -1260,7 +1291,7 @@ def broadcast_state_update():
             "auto_trading_enabled": AUTO_TRADING_ENABLED,
             "max_risk_per_trade_percent": MAX_RISK_PER_TRADE_PERCENT,
             "max_open_positions": MAX_OPEN_POSITIONS,
-            "challenge": challenge_metrics  # <-- Must be included here so UI receives it
+            "challenge": challenge_metrics
         }
 
         default_state = symbol_states[DEFAULT_SYMBOL]
@@ -1281,6 +1312,7 @@ def broadcast_state_update():
     if disconnected:
         with state_lock:
             connected_ui_clients.difference_update(disconnected)
+
 class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
     def _send_json(self, status_code, response):
         self.send_response(status_code)
@@ -1396,7 +1428,35 @@ class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
             self.send_header('Content-type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps({"status": "ok", "agent_status": agent_status}).encode('utf-8'))
-
+        elif self.path == '/api/modify-position':
+            content_length = int(self.headers['Content-Length'])
+            try:
+                payload = json.loads(self.rfile.read(content_length).decode('utf-8'))
+                ticket = int(payload.get('ticket'))
+                sl = float(payload.get('sl', 0.0))
+                tp = float(payload.get('tp', 0.0))
+                
+                succeeded, message, result = mt5_bridge.modify_position(ticket, sl, tp)
+                if succeeded:
+                    self._send_json(200, {"status": "SUCCESS", "message": message, "result": result})
+                else:
+                    self._send_json(400, {"status": "REJECTED", "message": message})
+            except Exception as e:
+                self._send_json(400, {"status": "REJECTED", "message": str(e)})
+        elif self.path == '/api/close-position':
+            content_length = int(self.headers['Content-Length'])
+            try:
+                payload = json.loads(self.rfile.read(content_length).decode('utf-8'))
+                ticket = int(payload.get('ticket'))
+                
+                succeeded, message, result = mt5_bridge.close_position(ticket)
+                if succeeded:
+                    self._send_json(200, {"status": "SUCCESS", "message": message, "result": result})
+                else:
+                    self._send_json(400, {"status": "REJECTED", "message": message})
+            except Exception as e:
+                self._send_json(400, {"status": "REJECTED", "message": str(e)})
+                
         elif self.path == '/api/execute-trade':
             if not LIVE_TRADING_ENABLED:
                 self._send_json(403, {
@@ -1483,7 +1543,8 @@ class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
                     tp=tp,
                     status="OPEN"
                 )
-               # >>> SYNC MANUAL TRADES TO THE CHALLENGE TRACKER <<<
+                
+                # >>> SYNC MANUAL TRADES TO THE CHALLENGE TRACKER DB <<<
                 try:
                     challenge_tracker = compounding_challenge.CompoundingChallengeTracker()
                     challenge_tracker.log_challenge_trade(
@@ -1501,7 +1562,7 @@ class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
                     print(f"Challenge sync error: {ex}")
                     
                 print(f"[{ACTIVE_TRADING_STYLE} MANUAL UI TRADE LOGGED & ENROLLED] Ticket {ticket} | {action} {volume} lots on {symbol}")
-
+                
             self._send_json(200, {"status": "SUCCESS", "message": message, "mt5_result": result})
         else:
             self.send_error(404)

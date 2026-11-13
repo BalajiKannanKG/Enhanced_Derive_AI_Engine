@@ -17,7 +17,7 @@
             <span class="brand-copy">MT5 Desk</span>
         </h1>
         <div class="header-actions">
-            <div id="portfolio-lock-badge" class="badge badge-normal" title="Global Portfolio Position Lock">Lock: 0/1</div>
+            <div id="portfolio-lock-badge" class="badge badge-normal" title="Global Portfolio Position Lock">Lock: 0/5</div>
             <div id="spread-guard-badge" class="badge badge-success" title="Dynamic Spread & Slippage Guard Status">Spread: Optimal</div>
             <select id="symbol-selector" class="symbol-select" onchange="selectTradingSymbol(this.value)" aria-label="Symbol selector">
                 <option>Loading...</option>
@@ -64,10 +64,17 @@
         </div>
     </div>
 
-    <div class="market-alerts" aria-label="Market conditions and manual trading">
+    <div class="market-alerts" aria-label="Market conditions and manual trading" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
         <div class="signal-box signal-hold" id="val-signal">HOLD / SCANNING</div>
         <div id="tf-squeeze-state" style="font-size: 0.72rem; font-weight: bold; text-align: center; padding: 2px; border-radius: 3px; background: rgba(245, 158, 11, 0.15); border: 1px solid var(--accent-yellow); color: var(--accent-yellow);">🟡 CONSOLIDATION (Squeeze)</div>
         <div id="tf-breakout-alert" style="font-size: 0.72rem; font-weight: bold; text-align: center; padding: 2px; border-radius: 3px; background: rgba(6, 182, 212, 0.15); border: 1px solid var(--accent-cyan); color: var(--accent-cyan);">⚡ STANDBY</div>
+        
+        <!-- Dedicated Lot Size Control -->
+        <div style="display: flex; align-items: center; gap: 4px; background: var(--card-bg); border: 1px solid var(--border-color); padding: 2px 6px; border-radius: 4px;">
+            <span style="font-size: 0.65rem; font-weight: bold; color: var(--text-muted);">LOTS:</span>
+            <input type="number" id="manualLotSizeInput" value="0.50" step="0.01" min="0.01" style="width: 60px; font-size: 0.75rem; font-weight: bold; background: transparent; border: none; color: var(--text-main); text-align: center;" title="Enter manual order lot size">
+        </div>
+
         <button class="btn btn-start market-trade-button" aria-label="Manual buy" title="Manual buy" onclick="executeManualTrade('BUY', this)" disabled>▲ BUY</button>
         <button class="btn btn-stop market-trade-button" aria-label="Manual sell" title="Manual sell" onclick="executeManualTrade('SELL', this)" disabled>▼ SELL</button>
     </div>
@@ -254,8 +261,6 @@ function renderOpenPositionsPanel(mt5Account) {
 }
 
 async function closeTradeFromUI(ticket) {
-    if (!window.confirm(`Are you sure you want to close trade #${ticket}?`)) return;
-
     try {
         const res = await fetch('/api/close-position', {
             method: 'POST',
@@ -265,13 +270,13 @@ async function closeTradeFromUI(ticket) {
         const result = await res.json();
 
         if (res.ok) {
-            alert(`✅ Trade #${ticket} closed successfully.`);
+            showToast(`✅ Trade #${ticket} closed successfully.`, "success");
             fetchDashboardData();
         } else {
-            alert(`❌ Failed to close trade: ${result.message}`);
+            showToast(`❌ Failed to close trade: ${result.message}`, "error");
         }
     } catch (e) {
-        alert("Could not reach the local server to close the trade.");
+        showToast("Could not reach local server to close trade.", "error");
     }
 }
 
@@ -433,6 +438,32 @@ function updateChallengeUI(data) {
             'h4': 14400,
             'd1': 86400
         };
+
+        // Non-blocking Toast notification system for rapid multi-clicking
+        function showToast(message, type = "success") {
+            let container = document.getElementById('toast-container');
+            if (!container) {
+                container = document.createElement('div');
+                container.id = 'toast-container';
+                document.body.appendChild(container);
+            }
+            let toast = document.createElement('div');
+            toast.className = 'toast-message';
+            toast.style.background = type === 'success' ? '#10b981' : (type === 'error' ? '#ef4444' : '#f59e0b');
+            toast.innerText = message;
+            container.appendChild(toast);
+
+            requestAnimationFrame(() => {
+                toast.style.opacity = '1';
+                toast.style.transform = 'translateY(0)';
+            });
+
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateY(10px)';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
 
         function selectTradingSymbol(symbol) {
             if (!dashboardState || !dashboardState.symbols || !dashboardState.symbols[symbol]) return;
@@ -817,23 +848,21 @@ function updateChallengeUI(data) {
                 !Number.isFinite(maxVolume) || maxVolume < minVolume ||
                 !Number.isFinite(volumeStep) || volumeStep <= 0
             ) {
-                alert(`MT5 volume specifications are unavailable for ${selectedSymbol}; no order was sent.`);
+                showToast(`MT5 volume specifications are unavailable for ${selectedSymbol}.`, "error");
                 return;
             }
 
-            const volumeText = window.prompt(
-                `Enter MT5 lot volume for ${selectedSymbol} ${actionType} (broker min ${minVolume}, max ${maxVolume}, step ${volumeStep}):`,
-                String(minVolume)
-            );
-            if (volumeText === null) return;
-            const finalVolume = Number(volumeText);
+            // Read directly from the dashboard lot size input box
+            const lotInputEl = document.getElementById('manualLotSizeInput');
+            const finalVolume = lotInputEl ? Number(lotInputEl.value) : minVolume;
+
             const volumeSteps = (finalVolume - minVolume) / volumeStep;
             if (
                 !Number.isFinite(finalVolume) || finalVolume < minVolume ||
                 finalVolume > maxVolume || !Number.isFinite(volumeSteps) ||
                 Math.abs(volumeSteps - Math.round(volumeSteps)) > 1e-7
             ) {
-                alert(`Enter a valid volume for ${selectedSymbol}: minimum ${minVolume}, maximum ${maxVolume}, step ${volumeStep}.`);
+                showToast(`Enter a valid volume: min ${minVolume}, max ${maxVolume}, step ${volumeStep}.`, "error");
                 return;
             }
 
@@ -851,15 +880,6 @@ function updateChallengeUI(data) {
             const sl = actionType === 'BUY' ? (entry - slDistance) : (entry + slDistance);
 
             const riskLimit = Number(globalData.max_risk_per_trade_percent) || 1;
-            const confirmed = window.confirm(
-                `Submit a REAL MT5 ${actionType} market order?\n\n` +
-                `Symbol: ${selectedSymbol}\nVolume: ${finalVolume} lots\n` +
-                `MT5 reference price: ${entry.toFixed(3)}\nStop loss: ${sl.toFixed(3)}\n` +
-                `Take profit: ${tp.toFixed(3)}\n` +
-                `Maximum stop-loss risk: ${riskLimit}% of account balance\n\n` +
-                `The server recalculates stop/target from the live MT5 quote and rechecks open positions, margin, and risk.`
-            );
-            if (!confirmed) return;
 
             const payload = {
                 timestamp: Math.floor(Date.now() / 1000),
@@ -880,19 +900,13 @@ function updateChallengeUI(data) {
                 
                 if (res.ok) {
                     const mt5Result = result.mt5_result || {};
-                    const actualSl = Number(mt5Result.sl);
-                    const actualTp = Number(mt5Result.tp);
-                    alert(
-                        `🚀 MANUAL SINGLE ${actionType} ORDER ACCEPTED!\nVolume: ${finalVolume} Lots\n` +
-                        `MT5 quote: ${Number(mt5Result.quote_price).toFixed(3)}\n` +
-                        `TP: ${(Number.isFinite(actualTp) ? actualTp : tp).toFixed(3)}\n` +
-                        `SL: ${(Number.isFinite(actualSl) ? actualSl : sl).toFixed(3)}`
-                    );
+                    showToast(`🚀 Order Placed! Ticket: #${mt5Result.order || 'N/A'} (${actionType})`, "success");
+                    fetchDashboardData();
                 } else {
-                    alert(`❌ MANUAL TRADE REJECTED: ${result.message}`);
+                    showToast(`❌ Rejected: ${result.message}`, "error");
                 }
             } catch (e) {
-                alert("Could not reach the local trade server. Check the engine console before retrying to avoid duplicate orders.");
+                showToast("Could not reach local trade server.", "error");
             } finally {
                 renderTradingMode(globalData);
             }
@@ -988,7 +1002,7 @@ function updateChallengeUI(data) {
             }
 
             const openPositionsList = account.positions || [];
-            const maxPosLimit = data.max_open_positions || 1;
+            const maxPosLimit = data.max_open_positions || 5;
             const portfolioBadge = document.getElementById('portfolio-lock-badge');
             if (portfolioBadge) {
                 if (openPositionsList.length >= maxPosLimit) {

@@ -14,3 +14,4 @@ multi_timeframe_trade_log.csv
 trade_request.json
 account_state.json
 runtime/
+.aider*

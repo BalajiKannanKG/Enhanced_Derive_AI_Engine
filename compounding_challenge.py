@@ -5,6 +5,7 @@ import pandas as pd
 from datetime import datetime, timezone, timedelta
 import MetaTrader5 as mt5
 from datetime import datetime, timezone, timedelta
+from trading_modules import get_db_connection, calculate_atr, evaluate_trade_risk_reward, monitor_and_cut_stagnant_positions, execute_guarded_order
 
 # Define Eastern Time zone (handling EST / EDT offset safely)
 # Alternatively, use zoneinfo.ZoneInfo("America/New_York") if on Python 3.9+
@@ -26,7 +27,7 @@ MAX_CONSECUTIVE_LOSSES = 3
 
 def init_challenge_db():
     """Initializes dedicated challenge tables in the SQLite telemetry database and auto-migrates columns."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection(DB_PATH)
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -107,7 +108,7 @@ class CompoundingChallengeTracker:
 
     def load_state(self):
         """Loads existing state from database or calculates fresh parameters for today in Eastern Time."""
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_db_connection(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
             SELECT date_str, day_number, starting_balance, current_balance, high_water_mark, 
@@ -206,7 +207,7 @@ class CompoundingChallengeTracker:
         time_opened = eastern_now.strftime("%H:%M:%S")
 
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = get_db_connection(DB_PATH)
             cursor = conn.cursor()
             
             # Strict uniqueness check on ticket
@@ -332,7 +333,7 @@ class CompoundingChallengeTracker:
     def export_challenge_report(self, filepath: str = "challenge_export_report.csv"):
         """Exports all challenge trades and daily statuses to CSV for offline analysis."""
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = get_db_connection(DB_PATH)
             df_trades = pd.read_sql_query("SELECT * FROM challenge_trades", conn)
             df_trades.to_csv(filepath, index=False)
             conn.close()
@@ -344,7 +345,7 @@ class CompoundingChallengeTracker:
 def get_current_challenge_status():
     """Retrieves current challenge status with robust manual/auto classification and Eastern Time date matching."""
     init_challenge_db()
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection(DB_PATH)
     cursor = conn.cursor()
 
     today_str = get_eastern_time().strftime("%Y-%m-%d")
@@ -465,7 +466,7 @@ def get_current_challenge_status():
 def sync_closed_challenge_trades():
     """Scans MT5 history for closed challenge tickets and updates their final PnL, exit price, and status."""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_db_connection(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("SELECT ticket FROM challenge_trades WHERE status = 'OPEN'")
         open_tickets = [row[0] for row in cursor.fetchall()]

@@ -13,13 +13,13 @@ from datetime import datetime, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, cast
 from urllib.parse import urlsplit
-
+from trading_modules import get_db_connection, calculate_atr, evaluate_trade_risk_reward, monitor_and_cut_stagnant_positions, execute_guarded_order
 import pandas as pd
 import pandas_ta as ta
+import MetaTrader5 as mt5  # <--- Ensure MetaTrader5 is explicitly imported here
 from mt5_bridge import MT5Bridge
 from websockets.sync.server import serve
 import compounding_challenge
-
 try:
     # If using the class instance tracker:
     tracker = compounding_challenge.CompoundingChallengeTracker()
@@ -45,7 +45,7 @@ MT5_SYMBOL = os.environ.get("MT5_SYMBOL", "Volatility 25 Index")
 if MT5_SYMBOL not in SUPPORTED_SYMBOLS:
     raise ValueError(f"MT5_SYMBOL must be one of: {', '.join(SUPPORTED_SYMBOLS)}")
 DEFAULT_SYMBOL = MT5_SYMBOL
-MAX_OPEN_POSITIONS = 1
+MAX_OPEN_POSITIONS = 5
 MT5_MAGIC_NUMBER = 123456
 DB_PATH = os.path.join(PROJECT_DIR, "trade_telemetry.sqlite")
 CSV_LOG_PATH = os.path.join(PROJECT_DIR, "multi_timeframe_trade_log.csv")
@@ -94,7 +94,7 @@ CURRENT_PROFILE = TRADING_PROFILES[ACTIVE_TRADING_STYLE]
 
 def init_telemetry_sink():
     """Initializes comprehensive SQLite telemetry table including trading style metrics and auto-migrates missing columns."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS trade_telemetry (
@@ -166,7 +166,7 @@ def log_trade_event(
     partials_str = json.dumps(partial_closures) if partial_closures else "None"
     
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_db_connection(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO trade_telemetry 
@@ -337,7 +337,9 @@ def process_dataframe(df, symbol: str = DEFAULT_SYMBOL):
     df = df.copy()
     df = df[~df.index.duplicated(keep='last')]
     df = df.sort_index()
-    
+    highs = df['high'].values
+    lows = df['low'].values
+    closes = df['close'].values
     df['open'] = df['open'].where(df['open'] > 0, df['close'])
     df['close'] = df['close'].where(df['close'] > 0, df['open'])
     df['high'] = df[['high', 'open', 'close']].max(axis=1).where(lambda x: x > 0, df['close'])
@@ -348,7 +350,7 @@ def process_dataframe(df, symbol: str = DEFAULT_SYMBOL):
     df['ema100'] = ta_indicators.ema(df['close'], length=100)
     df['ema200'] = ta_indicators.ema(df['close'], length=200)
     df['rsi'] = ta_indicators.rsi(df['close'], length=14)
-    df['atr'] = ta_indicators.atr(df['high'], df['low'], df['close'], length=14)
+    df['atr'] = calculate_atr(highs, lows, closes, period=14)
     df['ema50'] = ta_indicators.ema(df['close'], length=50)
     
     adx_df = ta_indicators.adx(df['high'], df['low'], df['close'], length=14)
@@ -437,7 +439,7 @@ def check_and_sync_closed_telemetry_trades():
     if not mt5_bridge.connect():
         return
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_db_connection(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("SELECT ticket FROM trade_telemetry WHERE exit_reason = 'OPEN'")
         open_tickets = [row[0] for row in cursor.fetchall()]
@@ -502,7 +504,7 @@ def get_telemetry_path_adjustments() -> dict:
     if not os.path.exists(DB_PATH):
         return adjustments
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_db_connection(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("SELECT strategies_utilized, exit_reason FROM trade_telemetry WHERE exit_reason != 'OPEN'")
         rows = cursor.fetchall()
@@ -894,6 +896,32 @@ def check_and_auto_trigger_trade(agent_state, symbol: str = DEFAULT_SYMBOL):
     sl_mult = base_sl_mult * 1.2 if is_volatility_expansion else base_sl_mult
     tp_mult = base_tp_mult * 1.2 if is_volatility_expansion else base_tp_mult
 
+    # Calculate proposed entry, stop loss, and take profit
+    entry_price = closed_price
+    if action == "BUY":
+        stop_loss = entry_price - (atr * sl_mult)
+        target_price = entry_price + (atr * tp_mult)
+    else:
+        stop_loss = entry_price + (atr * sl_mult)
+        target_price = entry_price - (atr * tp_mult)
+        
+    
+
+    # >>> EVALUATE RISK-REWARD RATIO <<<
+    valid_rr, rr_ratio, size_multiplier = evaluate_trade_risk_reward(
+        entry_price=entry_price, 
+        stop_loss=stop_loss, 
+        target_price=target_price, 
+        min_rr=1.5
+    )
+
+    if not valid_rr:
+        print(f"[R:R REJECT] Trade skipped: R:R ratio {rr_ratio:.2f} is below minimum threshold of 1.5.")
+        return
+
+# Apply the size multiplier to your risk or lot calculation if desired
+# adjusted_risk_percent = MAX_RISK_PER_TRADE_PERCENT * size_multiplier
+
     payload = {
         "symbol": symbol,
         "action": action,
@@ -932,10 +960,59 @@ def check_and_auto_trigger_trade(agent_state, symbol: str = DEFAULT_SYMBOL):
             if current_spread > max_allowed_spread:
                 print(f"[SPREAD GUARD REJECT] {symbol} spread ({current_spread:.3f}) exceeds max allowed ({max_allowed_spread:.3f}).")
                 return
-
-        succeeded, message, result = mt5_bridge.place_market_order(
-            payload, MAX_RISK_PER_TRADE_PERCENT
+            
+        # >>> FIX: CALCULATE LOT SIZE DYNAMICALLY HERE <<<
+        account_balance = float(account_state.get("balance", 200.0))
+        challenge_tracker = compounding_challenge.CompoundingChallengeTracker(initial_capital=account_balance)
+        
+        # Scale risk percentage using the R:R quality multiplier (e.g. 1.0x to 1.5x)
+        effective_risk_pct = MAX_RISK_PER_TRADE_PERCENT * size_multiplier
+        
+        # Calculate dynamic lot size based on account balance & risk percent
+        account_balance = float(account_state.get("balance", 200.0))
+        challenge_tracker = compounding_challenge.CompoundingChallengeTracker(initial_capital=account_balance)
+        raw_lot_size = challenge_tracker.calculate_dynamic_lot_size(
+            account_balance=account_balance,
+            atr_val=atr,
+            min_lot=0.50,
+            volume_step=0.01,
+            risk_pct=effective_risk_pct * 100.0
         )
+
+        # >>> NORMALIZE LOT SIZE AGAINST BROKER SYMBOL SPECS (Fixes Error 10014) <<<
+        symbol_info = mt5.symbol_info(symbol)
+        if symbol_info is not None:
+            min_volume = symbol_info.volume_min
+            max_volume = symbol_info.volume_max
+            volume_step = symbol_info.volume_step
+            
+            # Clamp between min and max
+            lot_size = max(min_volume, min(max_volume, raw_lot_size))
+            
+            # Round to the nearest allowed volume step
+            if volume_step > 0:
+                lot_size = round(round((lot_size - min_volume) / volume_step) * volume_step + min_volume, 2)
+        else:
+            lot_size = raw_lot_size
+                
+        # After calculating entry price, stop-loss (sl), take-profit (tp), and lot_size
+        order_type = mt5.ORDER_TYPE_BUY if action == "BUY" else mt5.ORDER_TYPE_SELL
+
+        succeeded, message, result = execute_guarded_order(
+            symbol=symbol,
+            order_type=order_type,
+            lot_size=lot_size,
+            price=closed_price,
+            sl=stop_loss,
+            tp=target_price,
+            max_allowed_spread_multiplier=1.5
+        )
+
+        if succeeded:
+            ticket = result.get('order') or result.get('deal')
+            # Proceed with logging trade telemetry...
+        else:
+            print(f"[GUARDED ORDER REJECTED] {message}")
     
     if succeeded:
         ticket = result.get('order')
@@ -972,13 +1049,32 @@ def manage_active_trades(agent_state):
     if not positions:
         return
 
-    import MetaTrader5 as mt5
     profile = CURRENT_PROFILE
     primary_tf = profile["primary_tf"]
     scale_threshold = profile["partial_scale_out_atr"]
     stagnation_limit = profile["stagnation_seconds"]
 
+    # >>> CALL MODULE 4: MONITOR & CUT STAGNANT POSITIONS <<<
+    # This automatically evaluates trade age and profit bounds (-2.0 to 1.0)
+    # and dispatches closures for stalled positions via MetaTrader 5.
+    closed_tickets = monitor_and_cut_stagnant_positions(
+        mt5_connection=mt5_bridge, 
+        active_positions=positions, 
+        max_stagnation_seconds=stagnation_limit
+    )
+
+    if closed_tickets:
+        for ticket in closed_tickets:
+            scaled_out_positions.discard(ticket)
+            close_time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            mod_list = active_trade_evolution_logs.pop(ticket, ["Stagnation cut executed via trading_modules"])
+            print(f"[STAGNATION CUT] Closed stagnant trade ticket #{ticket}")
+
+    # Continue with remaining active position management (scale-outs, trailing stops, etc.)
     for pos in positions:
+        ticket = int(pos["ticket"])
+        if ticket in closed_tickets:
+            continue
         symbol = pos.get("symbol")
         if symbol not in SUPPORTED_SYMBOLS or int(pos.get("magic", 0)) != MT5_MAGIC_NUMBER:
             continue
@@ -1498,54 +1594,127 @@ class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
                 self._send_json(503, {"status": "REJECTED", "message": risk_message})
                 return
 
-            payload["symbol"] = payload.get("symbol") or MT5_SYMBOL
-            payload["risk_pct"] = risk_percent
-            succeeded, message, result = mt5_bridge.place_market_order(payload, risk_percent * 100.0)
+            symbol = payload.get("symbol") or MT5_SYMBOL
+            action = payload.get("action", "BUY").upper()
+            order_type = mt5.ORDER_TYPE_BUY if action == "BUY" else mt5.ORDER_TYPE_SELL
+
+            # Retrieve current ATR for stop-loss/take-profit calculation
+            symbol_states = symbol_tf_caches.get(symbol, {})
+            tf_df = symbol_states.get(CURRENT_PROFILE["primary_tf"])
+            atr = 1.0
+            if tf_df is not None and not tf_df.empty and 'atr' in tf_df.columns:
+                latest_atr = tf_df['atr'].iloc[-1]
+                if math.isfinite(float(latest_atr)):
+                    atr = float(latest_atr)
+
+            # Fetch current live tick price
+            tick = mt5.symbol_info_tick(symbol)
+            if tick is None:
+                self._send_json(400, {"status": "REJECTED", "message": "Symbol tick data unavailable."})
+                return
+            current_price = float(tick.ask if action == "BUY" else tick.bid)
+
+            # Compute SL and TP using profile ATR multiples
+            # Use frontend-calculated SL/TP distances if provided, otherwise fallback to profile ATR multiples
+            sl_distance = payload.get("sl_distance")
+            tp_distance = payload.get("tp_distance")
+
+            if sl_distance is not None and tp_distance is not None:
+                if action == "BUY":
+                    sl = current_price - float(sl_distance)
+                    tp = current_price + float(tp_distance)
+                else:
+                    sl = current_price + float(sl_distance)
+                    tp = current_price - float(tp_distance)
+            else:
+                sl_mult = CURRENT_PROFILE["sl_atr_mult"]
+                tp_mult = CURRENT_PROFILE["tp_atr_mult"]
+                if action == "BUY":
+                    sl = current_price - (atr * sl_mult)
+                    tp = current_price + (atr * tp_mult)
+                else:
+                    sl = current_price + (atr * sl_mult)
+                    tp = current_price - (atr * tp_mult)
+
+          
+           # Calculate dynamic lot size based on account balance & risk percent
+            # Use requested volume from the UI input box if provided, otherwise calculate dynamically
+            requested_volume = payload.get("volume")
+            if requested_volume is not None:
+                raw_lot_size = float(requested_volume)
+            else:
+                account_balance = float(account_state.get("balance", 200.0))
+                challenge_tracker = compounding_challenge.CompoundingChallengeTracker(initial_capital=account_balance)
+                raw_lot_size = challenge_tracker.calculate_dynamic_lot_size(
+                    account_balance=account_balance,
+                    atr_val=atr,
+                    min_lot=0.50,
+                    volume_step=0.01,
+                    risk_pct=risk_percent * 100.0
+                )
+
+            # >>> NORMALIZE LOT SIZE AGAINST BROKER SYMBOL SPECS (Fixes Error 10014) <<<
+            symbol_info = mt5.symbol_info(symbol)
+            if symbol_info is not None:
+                min_volume = symbol_info.volume_min
+                max_volume = symbol_info.volume_max
+                volume_step = symbol_info.volume_step
+                
+                # Clamp between min and max
+                lot_size = max(min_volume, min(max_volume, raw_lot_size))
+                
+                # Round to the nearest allowed volume step
+                if volume_step > 0:
+                    lot_size = round(round((lot_size - min_volume) / volume_step) * volume_step + min_volume, 2)
+            else:
+                lot_size = raw_lot_size
+                
+            # >>> DISPATCH VIA GUARDED EXECUTION MODULE <<<
+            # >>> DISPATCH VIA GUARDED EXECUTION MODULE <<<
+            succeeded, message, result = execute_guarded_order(
+                symbol=symbol,
+                order_type=order_type,
+                lot_size=lot_size,
+                price=current_price,
+                sl=sl,
+                tp=tp,
+                max_allowed_spread_multiplier=1.5
+            )
+
             if not succeeded:
-                self._send_json(400, {"status": "REJECTED", "message": message, "mt5_result": result})
+                self._send_json(400, {"status": "REJECTED", "message": message})
                 return
 
-            ticket = result.get('order')
-            if ticket:
-                volume = result.get('volume', 0.0)
-                entry = float(result.get('price', 0.0))
-                margin = float(result.get('margin', 0.0))
-                action = payload.get("action", "BUY").upper()
-                symbol = payload["symbol"]
-                
-                symbol_states = symbol_tf_caches.get(symbol, {})
-                tf_df = symbol_states.get(CURRENT_PROFILE["primary_tf"])
-                atr = 1.0
-                if tf_df is not None and not tf_df.empty and 'atr' in tf_df.columns:
-                    latest_atr = tf_df['atr'].iloc[-1]
-                    if math.isfinite(float(latest_atr)):
-                        atr = float(latest_atr)
+            # Extract order details from successful execution result
+            ticket = result.order if hasattr(result, 'order') else result.get('order')
+            volume = result.volume if hasattr(result, 'volume') else result.get('volume', lot_size)
+            entry = float(result.price if hasattr(result, 'price') else result.get('price', current_price))
+            margin = float(getattr(result, 'margin', 0.0) or 0.0)
 
-                sl = float(result.get('sl', entry - (atr * CURRENT_PROFILE["sl_atr_mult"]) if action == "BUY" else entry + (atr * CURRENT_PROFILE["sl_atr_mult"])))
-                tp = float(result.get('tp', entry + (atr * CURRENT_PROFILE["tp_atr_mult"]) if action == "BUY" else entry - (atr * CURRENT_PROFILE["tp_atr_mult"])))
+            active_trade_evolution_logs[ticket] = []
 
-                active_trade_evolution_logs[ticket] = []
-                log_trade_event(
-                    ticket=ticket,
-                    symbol=symbol,
-                    trading_style=ACTIVE_TRADING_STYLE,
-                    timeframe=CURRENT_PROFILE["primary_tf"],
-                    action=action,
-                    regime="MANUAL_UI_DISPATCH",
-                    score=100,
-                    strategies=["Manual UI Execution"],
-                    modifications=["Manual UI Order Placed & Enrolled in Active Python Post-Trade Management"],
-                    entry_price=entry,
-                    margin=margin,
-                    volume=volume,
-                    atr=atr,
-                    sl=sl,
-                    tp=tp,
-                    status="OPEN"
-                )
-                
-                # >>> SYNC MANUAL TRADES TO THE CHALLENGE TRACKER DB <<<
+            # >>> ASYNC BACKGROUND LOGGING TO REMOVE UI LAG <<<
+            def async_post_trade_tasks():
                 try:
+                    log_trade_event(
+                        ticket=ticket,
+                        symbol=symbol,
+                        trading_style=ACTIVE_TRADING_STYLE,
+                        timeframe=CURRENT_PROFILE["primary_tf"],
+                        action=action,
+                        regime="MANUAL_UI_DISPATCH",
+                        score=100,
+                        strategies=["Manual UI Execution"],
+                        modifications=["Manual UI Guarded Order Placed & Enrolled in Active Management"],
+                        entry_price=entry,
+                        margin=margin,
+                        volume=volume,
+                        atr=atr,
+                        sl=sl,
+                        tp=tp,
+                        status="OPEN"
+                    )
+                    
                     challenge_tracker = compounding_challenge.CompoundingChallengeTracker()
                     challenge_tracker.log_challenge_trade(
                         ticket=ticket,
@@ -1559,11 +1728,12 @@ class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
                         exit_reason="Manual UI Dispatch"
                     )
                 except Exception as ex:
-                    print(f"Challenge sync error: {ex}")
-                    
-                print(f"[{ACTIVE_TRADING_STYLE} MANUAL UI TRADE LOGGED & ENROLLED] Ticket {ticket} | {action} {volume} lots on {symbol}")
+                    print(f"Async post-trade log error: {ex}")
+
+            threading.Thread(target=async_post_trade_tasks, daemon=True).start()
                 
-            self._send_json(200, {"status": "SUCCESS", "message": message, "mt5_result": result})
+            print(f"[{ACTIVE_TRADING_STYLE} MANUAL UI GUARDED TRADE] Ticket {ticket} | {action} {volume} lots on {symbol}")
+            self._send_json(200, {"status": "SUCCESS", "message": message, "mt5_result": result.__dict__ if hasattr(result, '__dict__') else result})
         else:
             self.send_error(404)
 

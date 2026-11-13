@@ -472,6 +472,26 @@ h1 {
     margin-top: 1px;
 }
 
-
+#toast-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .toast-message {
+            color: white;
+            padding: 10px 16px;
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 13px;
+            font-weight: 600;
+            opacity: 0;
+            transition: opacity 0.3s ease, transform 0.3s ease;
+            transform: translateY(10px);
+        }
 .right-column .metric-row { margin: 0px !important; font-size: 0.5rem !important; font-weight: bold !important; }
 [hidden] { display: none !important; }

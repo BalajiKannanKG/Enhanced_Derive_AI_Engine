@@ -1,0 +1,2 @@
+# RULES
+- Never execute shell commands, git pull, npm, or yarn.

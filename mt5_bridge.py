@@ -397,8 +397,10 @@ class MT5Bridge:
             positions = mt5.positions_get()
             if account is None or positions is None:
                 return False, self._error_text(), {}
-            if positions:
-                return False, "An MT5 position is already open.", {}
+            
+            MAX_ALLOWED_POSITIONS = 5
+            if len(positions) >= MAX_ALLOWED_POSITIONS:
+                return False, f"Maximum open positions limit ({MAX_ALLOWED_POSITIONS}) reached.", {}
 
             symbol = str(payload.get("symbol") or self.symbol)
             if symbol not in self.symbols:

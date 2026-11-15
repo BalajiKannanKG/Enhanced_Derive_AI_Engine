@@ -54,7 +54,7 @@ echo Minimize MT5 if you do not want its window in the foreground.
 echo Keep this window open; press Ctrl+C here to stop the engine.
 echo.
 
-"%PYTHON%" "%~dp0Enhanced_Derive_AI_Engine.py" --style %STYLE% --enable-live-trading --enable-auto-trading
+"%PYTHON%" "%~dp0Enhanced_Derive_AI_Engine.py" --style SCALPING --enable-live-trading --enable-auto-trading
 set "EXIT_CODE=%ERRORLEVEL%"
 
 echo.

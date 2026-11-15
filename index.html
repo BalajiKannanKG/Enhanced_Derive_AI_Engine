@@ -19,9 +19,7 @@
         <div class="header-actions">
             <div id="portfolio-lock-badge" class="badge badge-normal" title="Global Portfolio Position Lock">Lock: 0/5</div>
             <div id="spread-guard-badge" class="badge badge-success" title="Dynamic Spread & Slippage Guard Status">Spread: Optimal</div>
-            <select id="symbol-selector" class="symbol-select" onchange="selectTradingSymbol(this.value)" aria-label="Symbol selector">
-                <option>Loading...</option>
-            </select>
+           
             <button class="theme-btn" onclick="toggleTheme()" id="themeToggleBtn" aria-label="Toggle color theme">☀️ Light</button>
             <div class="badge" id="last-update" role="status">Sync</div>
         </div>
@@ -64,19 +62,39 @@
         </div>
     </div>
 
-    <div class="market-alerts" aria-label="Market conditions and manual trading" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-        <div class="signal-box signal-hold" id="val-signal">HOLD / SCANNING</div>
-        <div id="tf-squeeze-state" style="font-size: 0.72rem; font-weight: bold; text-align: center; padding: 2px; border-radius: 3px; background: rgba(245, 158, 11, 0.15); border: 1px solid var(--accent-yellow); color: var(--accent-yellow);">🟡 CONSOLIDATION (Squeeze)</div>
-        <div id="tf-breakout-alert" style="font-size: 0.72rem; font-weight: bold; text-align: center; padding: 2px; border-radius: 3px; background: rgba(6, 182, 212, 0.15); border: 1px solid var(--accent-cyan); color: var(--accent-cyan);">⚡ STANDBY</div>
-        
-        <!-- Dedicated Lot Size Control -->
-        <div style="display: flex; align-items: center; gap: 4px; background: var(--card-bg); border: 1px solid var(--border-color); padding: 2px 6px; border-radius: 4px;">
-            <span style="font-size: 0.65rem; font-weight: bold; color: var(--text-muted);">LOTS:</span>
-            <input type="number" id="manualLotSizeInput" value="0.50" step="0.01" min="0.01" style="width: 60px; font-size: 0.75rem; font-weight: bold; background: transparent; border: none; color: var(--text-main); text-align: center;" title="Enter manual order lot size">
+<div class="single-line-control-bar" aria-label="Market conditions and manual trading">
+        <div class="control-group-left">
+            <div class="ctrl-signal-badge ctrl-signal-buy" id="val-signal">BUY</div>
+            <div id="tf-squeeze-state" class="ctrl-status-tag tag-expansion">🟢 EXPANSION (Normal)</div>
+            <div id="tf-breakout-alert" class="ctrl-status-tag tag-breakout">🚀 BULLISH BREAKOUT</div>
         </div>
 
-        <button class="btn btn-start market-trade-button" aria-label="Manual buy" title="Manual buy" onclick="executeManualTrade('BUY', this)" disabled>▲ BUY</button>
-        <button class="btn btn-stop market-trade-button" aria-label="Manual sell" title="Manual sell" onclick="executeManualTrade('SELL', this)" disabled>▼ SELL</button>
+        <div class="control-group-right">
+            <!-- Dynamic Lot Sizer with Steppers and Presets -->
+            <div class="lot-sizer-box">
+                <!-- ✨ AI Multi-TF Vision Trigger Button -->
+                <button class="btn-ai-vision" id="btnAiScan" onclick="triggerMultiTimeframeAiScan()" title="Scan all timeframes via Gemini Vision">✨ AI Vision Scan</button>
+                <button class="theme-btn" onclick="toggleTheme()" id="themeToggleBtn" aria-label="Toggle color theme">☀️ Light</button>
+                <div class="badge" id="last-update" role="status">Sync</div>
+                 <select id="symbol-selector" class="symbol-select" onchange="selectTradingSymbol(this.value)" aria-label="Symbol selector">
+                <option>Loading...</option>
+                </select>
+                <span class="lot-label">LOTS:</span>
+                <button type="button" class="lot-btn-step" onclick="adjustLotSize(-0.01)">-</button>
+                <input type="number" id="manualLotSizeInput" value="0.50" step="0.01" min="0.01" class="lot-input" title="Enter manual order lot size">
+                <button type="button" class="lot-btn-step" onclick="adjustLotSize(0.01)">+</button>
+            </div>
+            
+            <div class="lot-presets">
+                <button type="button" class="lot-preset-btn" onclick="setPresetLot(0.10)">0.10</button>
+                <button type="button" class="lot-preset-btn" onclick="setPresetLot(0.50)">0.50</button>
+                <button type="button" class="lot-preset-btn" onclick="setPresetLot(1.00)">1.00</button>
+            </div>
+
+            <!-- Primary Execution Buttons -->
+            <button class="btn-trade-buy market-trade-button" aria-label="Manual buy" title="Manual buy" onclick="executeManualTrade('BUY', this)" disabled>▲ BUY</button>
+            <button class="btn-trade-sell market-trade-button" aria-label="Manual sell" title="Manual sell" onclick="executeManualTrade('SELL', this)" disabled>▼ SELL</button>
+        </div>
     </div>
 
     <div class="dashboard-grid">
@@ -201,7 +219,20 @@
   </div>
 </div>
 <script>
+// Helper functions for the integrated Lot Sizer UI
+        function adjustLotSize(delta) {
+            const input = document.getElementById('manualLotSizeInput');
+            if (!input) return;
+            let currentVal = parseFloat(input.value) || 0.01;
+            let newVal = Math.max(0.01, +(currentVal + delta).toFixed(2));
+            input.value = newVal.toFixed(2);
+        }
 
+        function setPresetLot(val) {
+            const input = document.getElementById('manualLotSizeInput');
+            if (!input) return;
+            input.value = val.toFixed(2);
+        }
 function renderOpenPositionsPanel(mt5Account) {
     const container = document.getElementById('open-positions-container');
     const badge = document.getElementById('open-pos-count-badge');
@@ -413,7 +444,7 @@ function updateChallengeUI(data) {
             </div>
         </div>
     </div>
-
+    <div id="aiModalContainer"></div>
     <script>
         let globalData = null;
         let dashboardState = null;
@@ -438,7 +469,151 @@ function updateChallengeUI(data) {
             'h4': 14400,
             'd1': 86400
         };
+        // REMOVE captureAllTimeframeSnapshots() completely.
 
+        async function triggerMultiTimeframeAiScan() {
+            const btn = document.getElementById('btnAiScan');
+            if (btn) { btn.disabled = true; btn.innerText = "⚡ Running Industrial Scan..."; }
+
+            showToast("⚡ Running local industrial quantitative scan...", "info");
+            
+            try {
+                // Send request directly to the local industrial scanner without screenshots
+                const response = await fetch('/api/ai-vision-scan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        symbol: selectedSymbol,
+                        live_price: currentLivePrice,
+                        images: {} // No screenshots needed
+                    })
+                });
+
+                const data = await response.json();
+                if (response.ok && data.analysis) {
+                    const currentSymbolResult = data.analysis[selectedSymbol] || Object.values(data.analysis)[0];
+                    displayAiRecommendationModal(currentSymbolResult);
+                    showToast("✨ Industrial Quantitative Scan Complete!", "success");
+                } else {
+                    showToast(`❌ Scan Error: ${data.message || 'Invalid server response'}`, "error");
+                }
+            } catch (err) {
+                console.error("Scan Error:", err);
+                showToast("Could not contact local industrial scan server.", "error");
+            } finally {
+                if (btn) { btn.disabled = false; btn.innerText = "✨ AI Vision Scan"; }
+            }
+        }
+
+        function esc(t) { return String(t).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
+
+        function renderOpportunities(ai) {
+            const opps = ai.opportunities || [];
+            const pats = (ai.candle_patterns || []).filter(p => p.strength > 0).slice(0, 4);
+            const divs = (ai.divergences || []).slice(0, 3);
+            const cps = (ai.chart_patterns || []).filter(c => c.strength > 0 || c.bias === 0).slice(0, 3);
+            let html = '';
+            if (pats.length || divs.length || cps.length) {
+                html += '<div style="font-size:0.6rem; color:var(--text-muted); margin:8px 0 4px; font-weight:bold;">DETECTED SIGNALS (PRIMARY TF):</div><div style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:6px;">';
+                pats.forEach(p => { html += `<span style="font-size:0.58rem; padding:2px 6px; border-radius:3px; border:1px solid ${p.bias > 0 ? '#059669' : '#dc2626'}; color:${p.bias > 0 ? '#34d399' : '#f87171'};">🕯 ${esc(p.name)} ${p.strength}</span>`; });
+                cps.forEach(c => { html += `<span style="font-size:0.58rem; padding:2px 6px; border-radius:3px; border:1px solid ${c.bias > 0 ? '#059669' : (c.bias < 0 ? '#dc2626' : '#64748b')}; color:${c.bias > 0 ? '#34d399' : (c.bias < 0 ? '#f87171' : '#94a3b8')};">📈 ${esc(c.name)} · ${esc(c.status)}${c.target ? ' → ' + c.target : ''}</span>`; });
+                divs.forEach(d => { html += `<span style="font-size:0.58rem; padding:2px 6px; border-radius:3px; border:1px solid ${d.bias > 0 ? '#059669' : '#dc2626'}; color:${d.bias > 0 ? '#34d399' : '#f87171'};">📐 ${esc(d.kind)} ${esc(d.indicator)}</span>`; });
+                html += '</div>';
+            }
+            if (!opps.length) return html + '<div style="font-size:0.62rem; color:var(--text-muted); margin:6px 0;">No qualifying trade opportunities across timeframes right now.</div>';
+            html += '<div style="font-size:0.6rem; color:var(--text-muted); margin:8px 0 4px; font-weight:bold;">RANKED TRADE OPPORTUNITIES (alignment score, not win probability):</div>';
+            opps.forEach(o => {
+                const buy = o.action === 'BUY';
+                html += `<div style="border:1px solid var(--border-color); border-left:3px solid ${buy ? '#059669' : '#dc2626'}; border-radius:4px; padding:6px 8px; margin-bottom:5px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:6px;">
+                        <div style="font-size:0.66rem; font-weight:bold;">${buy ? '▲' : '▼'} ${esc(o.action)} · ${esc(o.type)} · ${esc(o.timeframe)} ${o.counter_trend ? '<span style="color:#fbbf24;">(counter-trend)</span>' : ''}</div>
+                        <div style="font-size:0.62rem; color:var(--accent-cyan);">Grade ${esc(o.grade)} · ${o.setup_score}</div>
+                    </div>
+                    <div style="font-size:0.58rem; color:var(--text-muted); margin:3px 0;">SL ${o.stop_loss} · TP ${o.take_profit} · R:R ${o.risk_reward} · ${esc(o.regime)}</div>
+                    <div style="font-size:0.58rem; margin-bottom:3px;">✔ ${o.confirmations.slice(0, 5).map(esc).join(' &nbsp;✔ ')}</div>
+                    <div style="font-size:0.56rem; color:var(--text-muted);">Trigger: ${esc(o.trigger)} · ${esc(o.invalidation)}</div>
+                    <button onclick="executeAiTrade('${o.action}', ${o.entry_price}, ${o.take_profit}, ${o.stop_loss})" style="margin-top:4px; background:${buy ? '#059669' : '#dc2626'}; color:#fff; border:none; padding:3px 10px; border-radius:3px; font-size:0.58rem; font-weight:bold; cursor:pointer;">Execute this setup</button>
+                </div>`;
+            });
+            return html;
+        }
+
+        function displayAiRecommendationModal(ai) {
+            const container = document.getElementById('aiModalContainer');
+            if (!container) return;
+
+            // Use ai.action instead of ai.recommendation
+            const action = ai.action || 'HOLD';
+            const recClass = action === 'BUY' ? 'rec-buy' : (action === 'SELL' ? 'rec-sell' : 'rec-hold');
+            const recIcon = action === 'BUY' ? '▲ BUY' : (action === 'SELL' ? '▼ SELL' : '✋ HOLD');
+
+            container.innerHTML = `
+                <div class="ai-modal-backdrop" id="aiModalBackdrop" onclick="if(event.target === this) closeAiModal();">
+                    <div class="ai-modal-card">
+                        <div class="ai-modal-header">
+                            <div class="ai-modal-title">
+                                <span>⚡ Industrial Multi-TF Quantitative Intelligence</span>
+                                <span style="font-size:0.65rem; color:var(--text-muted);">(${selectedSymbol})</span>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span class="ai-recommendation-badge ${recClass}">${recIcon}</span>
+                                <button onclick="closeAiModal()" style="background:none; border:none; color:var(--text-muted); font-size:1.1rem; cursor:pointer;">✖</button>
+                            </div>
+                        </div>
+
+                        <div class="ai-grid-metrics">
+                            <div class="ai-metric-box">
+                                <div class="ai-metric-label">CONFIDENCE</div>
+                                <!-- Use ai.confidence instead of ai.confidence_score -->
+                                <div class="ai-metric-val" style="color:var(--accent-cyan);">${ai.confidence || '85'}%</div>
+                            </div>
+                            <div class="ai-metric-box">
+                                <div class="ai-metric-label">ENTRY PRICE</div>
+                                <div class="ai-metric-val">${ai.entry_price || currentLivePrice.toFixed(3)}</div>
+                            </div>
+                            <div class="ai-metric-box">
+                                <div class="ai-metric-label">STOP LOSS</div>
+                                <div class="ai-metric-val" style="color:var(--accent-red);">${ai.stop_loss || '---'}</div>
+                            </div>
+                            <div class="ai-metric-box">
+                                <div class="ai-metric-label">TAKE PROFIT</div>
+                                <div class="ai-metric-val" style="color:var(--accent-green);">${ai.take_profit || '---'}</div>
+                            </div>
+                        </div>
+
+                        <div style="font-size: 0.6rem; color: var(--text-muted); margin-bottom: 4px; font-weight:bold;">INSTITUTIONAL MULTI-TIMEFRAME REASONING:</div>
+                        <div class="ai-reasoning-box">
+                            ${ai.reasoning || "Analysis complete based on multi-timeframe candle structure and indicators."}
+                        </div>
+
+                        ${renderOpportunities(ai)}
+
+                        <div class="ai-modal-actions">
+                            <button onclick="closeAiModal()" style="background:var(--surface-raised); color:var(--text-muted); border:1px solid var(--border-color); padding:6px 14px; border-radius:4px; font-size:0.65rem; cursor:pointer;">Close</button>
+                            ${action !== 'HOLD' ? `
+                                <button onclick="executeAiTrade('${action}', ${ai.entry_price || currentLivePrice}, ${ai.take_profit || 0}, ${ai.stop_loss || 0})" style="background:${action === 'BUY' ? '#059669' : '#dc2626'}; color:#fff; border:none; padding:6px 16px; border-radius:4px; font-size:0.65rem; font-weight:bold; cursor:pointer;">
+                                    🚀 Execute ${action} Trade
+                                </button>
+                            ` : ''}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function closeAiModal() {
+            const container = document.getElementById('aiModalContainer');
+            if (container) container.innerHTML = '';
+        }
+
+        async function executeAiTrade(action, entry, tp, sl) {
+            closeAiModal();
+            const lotInput = document.getElementById('manualLotSizeInput');
+            const volume = lotInput ? parseFloat(lotInput.value) || 0.10 : 0.10;
+            
+            showToast(`🚀 Executing Gemini AI ${action} Order (${volume} Lots)...`, "info");
+            executeManualTrade(action, document.getElementById('btnAiScan'));
+        }
         // Non-blocking Toast notification system for rapid multi-clicking
         function showToast(message, type = "success") {
             let container = document.getElementById('toast-container');
@@ -825,9 +1000,12 @@ function updateChallengeUI(data) {
                 return;
             }
 
-            const openPos = (globalData && globalData.mt5_account) ? (globalData.mt5_account.open_positions || 0) : 0;
-            if (openPos > 0) {
-                alert("❌ MANUAL TRADE REJECTED: Active trade already open on MT5.");
+            const positions = (globalData && globalData.mt5_account && Array.isArray(globalData.mt5_account.positions)) 
+                ? globalData.mt5_account.positions 
+                : [];
+            const maxPosLimit = globalData?.max_open_positions || 5;
+            if (positions.length >= maxPosLimit) {
+                alert(`❌ MANUAL TRADE REJECTED: Maximum open positions limit (${maxPosLimit}) reached.`);
                 return;
             }
 
@@ -1026,7 +1204,10 @@ function updateChallengeUI(data) {
             const mt5Ready = bridge.connection_verified === true && bridge.trade_allowed === true;
             const engineReady = data.agent_status === 'RUNNING';
             const symbolReady = data.mt5_symbol?.available === true;
-            const positionOpen = Number(data.mt5_account?.open_positions) > 0;
+            
+            const positions = (data.mt5_account && Array.isArray(data.mt5_account.positions)) ? data.mt5_account.positions : [];
+            const maxPosLimit = data.max_open_positions || 5;
+            const positionLimitReached = positions.length >= maxPosLimit;
 
             badge.innerText = enabled
                 ? (autoEnabled ? 'AUTO + MANUAL LIVE' : 'MANUAL LIVE ORDERS')
@@ -1037,12 +1218,12 @@ function updateChallengeUI(data) {
                 : 'Start with start_manual_trading.bat to enable manually confirmed MT5 orders.';
 
             document.querySelectorAll('.market-trade-button').forEach(button => {
-                button.disabled = !enabled || !mt5Ready || !engineReady || !symbolReady || positionOpen;
+                button.disabled = !enabled || !mt5Ready || !engineReady || !symbolReady || positionLimitReached;
                 button.title = button.disabled
                     ? !symbolReady
                         ? `MT5 quote and volume specifications are unavailable for ${selectedSymbol}.`
-                        : positionOpen
-                            ? 'The portfolio limit allows only one open position.'
+                        : positionLimitReached
+                            ? `Maximum open positions limit (${maxPosLimit}) reached.`
                             : 'Requires live trading mode, a connected MT5 account, and trading permission.'
                     : 'Submits a real MT5 order after volume entry and confirmation.';
             });

@@ -20,6 +20,36 @@ import MetaTrader5 as mt5  # <--- Ensure MetaTrader5 is explicitly imported here
 from mt5_bridge import MT5Bridge
 from websockets.sync.server import serve
 import compounding_challenge
+import time
+import random
+import base64
+import json
+from google import genai
+from google.genai import types
+
+import random
+
+from industrial_scanner import perform_industrial_technical_scan
+
+def handle_ai_vision_scan(request_payload):
+    """
+    100% Local Industrial Quantitative Scanner. 
+    Performs rigorous multi-timeframe mathematical confluence evaluation without external API calls or rate limits.
+    """
+    symbol = request_payload.get('symbol', 'Volatility 50 Index')
+    live_price = request_payload.get('live_price', 0.0)
+    
+    symbol_caches = symbol_tf_caches.get(symbol, {})
+    timeframes_dict = {}
+    for tf, df in symbol_caches.items():
+        timeframes_dict[tf] = process_dataframe(df, symbol)
+        
+    daily_df = symbol_caches.get("d1")
+    cpr = calculate_cpr(daily_df)
+    
+    result = perform_industrial_technical_scan(symbol, timeframes_dict, live_price, cpr)
+    return result
+
 try:
     # If using the class instance tracker:
     tracker = compounding_challenge.CompoundingChallengeTracker()
@@ -1524,6 +1554,48 @@ class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
             self.send_header('Content-type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps({"status": "ok", "agent_status": agent_status}).encode('utf-8'))
+        elif self.path == '/api/ai-vision-scan':
+            content_length = int(self.headers['Content-Length'])
+            try:
+                payload = json.loads(self.rfile.read(content_length).decode('utf-8'))
+                images_dict = payload.get('images', {})
+                
+                all_symbol_results = {}
+                
+                import concurrent.futures
+
+                def fetch_symbol_scan(symbol):
+                    symbol_payload = {
+                        'symbol': symbol,
+                        'images': images_dict,
+                        'live_price': current_prices.get(symbol, 0.0)
+                    }
+                    res = handle_ai_vision_scan(symbol_payload)
+                    time.sleep(1.5)  # Buffer delay between symbols to prevent 503 spikes
+                    return symbol, res
+
+                # Use max_workers=1 to process symbols sequentially and reliably without overloading the API
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future_to_symbol = {
+                        executor.submit(fetch_symbol_scan, symbol): symbol 
+                        for symbol in SUPPORTED_SYMBOLS
+                    }
+                    for future in concurrent.futures.as_completed(future_to_symbol):
+                        try:
+                            sym, result = future.result()
+                            all_symbol_results[sym] = result
+                        except Exception as exc:
+                            sym = future_to_symbol[future]
+                            print(f"{sym} generated an exception during scan: {exc}")
+                            all_symbol_results[sym] = {"action": "HOLD", "confidence": 0, "reasoning": "Execution error"}
+                
+                self._send_json(200, {
+                    "status": "SUCCESS",
+                    "analysis": all_symbol_results
+                })
+            except Exception as e:
+                print(f"Gemini Vision API Error: {e}")
+                self._send_json(500, {"status": "REJECTED", "message": str(e)})
         elif self.path == '/api/modify-position':
             content_length = int(self.headers['Content-Length'])
             try:

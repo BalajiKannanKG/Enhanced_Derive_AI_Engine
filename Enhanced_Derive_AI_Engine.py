@@ -266,6 +266,7 @@ def validate_requested_risk_percent(payload):
         return None, "risk_pct must be a number."
 
 TF_GRANULARITY = {
+    '1m': 60,
     '3m': 180,
     '5m': 300,
     '15m': 900,
@@ -275,6 +276,7 @@ TF_GRANULARITY = {
     'd1': 86400
 }
 MT5_TIMEFRAMES = {
+    '1m': 'TIMEFRAME_M1',
     '3m': 'TIMEFRAME_M3',
     '5m': 'TIMEFRAME_M5',
     '15m': 'TIMEFRAME_M15',

@@ -27,6 +27,7 @@
 
     <!-- Multi-TF Matrix Bar -->
     <div class="macro-bar">
+        <div class="matrix-card"><span class="matrix-title">1m</span><span id="matrix-status-1m" class="matrix-status status-flat">---</span><span id="matrix-timer-1m" class="matrix-timer">00:00</span></div>
         <div class="matrix-card"><span class="matrix-title">3m</span><span id="matrix-status-3m" class="matrix-status status-flat">---</span><span id="matrix-timer-3m" class="matrix-timer">00:00</span></div>
         <div class="matrix-card"><span class="matrix-title">5m</span><span id="matrix-status-5m" class="matrix-status status-flat">---</span><span id="matrix-timer-5m" class="matrix-timer">00:00</span></div>
         <div class="matrix-card"><span class="matrix-title">15m</span><span id="matrix-status-15m" class="matrix-status status-flat">---</span><span id="matrix-timer-15m" class="matrix-timer">00:00</span></div>
@@ -105,6 +106,7 @@
                 <div style="display: flex; align-items: center; gap: 6px;">
                     <!-- Timeframe Hyperlink Selector -->
                     <div class="tf-links-container" id="tfLinksContainer">
+                        <a class="tf-link" onclick="setSelectedItem('1m')">1m</a>
                         <a class="tf-link" onclick="setSelectedItem('3m')">3m</a>
                         <a class="tf-link active" onclick="setSelectedItem('5m')">5m</a>
                         <a class="tf-link" onclick="setSelectedItem('15m')">15m</a>
@@ -461,6 +463,7 @@ function updateChallengeUI(data) {
         let drawnHorizontalLines = [];
 
         const tfIntervals = {
+            '1m': 60,
             '3m': 180,
             '5m': 300,
             '15m': 900,

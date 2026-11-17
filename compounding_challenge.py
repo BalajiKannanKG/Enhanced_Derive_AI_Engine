@@ -462,7 +462,165 @@ def get_current_challenge_status():
         "total_return_pct": round(total_return_pct, 2),
         "daily_return_pct": round(daily_return_pct, 2)
     }
+def sync_external_mt5_mobile_trades():
+    """Scans MT5 history for any closed trades (including mobile app orders) and syncs them into challenge_trades and daily status."""
+    try:
+        conn = get_db_connection(DB_PATH)
+        cursor = conn.cursor()
         
+        # Get all already recorded tickets
+        cursor.execute("SELECT ticket FROM challenge_trades")
+        recorded_tickets = {row[0] for row in cursor.fetchall()}
+        
+        utc_from = datetime.now(timezone.utc) - timedelta(days=7)
+        deals = mt5.history_deals_get(utc_from, datetime.now(timezone.utc))
+
+        if not deals:
+            conn.close()
+            return
+
+        tracker = CompoundingChallengeTracker()
+        new_trades_found = False
+
+        for deal in deals:
+            # Detect closed deal exits not yet present in challenge_trades
+            if deal.entry == mt5.DEAL_ENTRY_OUT and deal.position_id not in recorded_tickets:
+                ticket = deal.position_id
+                exit_price = float(deal.price)
+                pnl = float(deal.profit + deal.swap + deal.commission)
+                exit_reason = "MT5_MOBILE_TP" if pnl > 0 else "MT5_MOBILE_SL"
+                status = "CLOSED_PROFIT" if pnl > 0 else "CLOSED_LOSS"
+                action = "BUY" if deal.type == mt5.DEAL_TYPE_BUY else "SELL"
+                
+                tracker.log_challenge_trade(
+                    ticket=ticket,
+                    symbol=deal.symbol,
+                    action=action,
+                    lot_size=deal.volume,
+                    entry_price=float(deal.price_initial or deal.price),
+                    exit_price=exit_price,
+                    pnl=pnl,
+                    status=status,
+                    exit_reason=exit_reason
+                )
+                new_trades_found = True
+
+        conn.close()
+        if new_trades_found:
+            print("Successfully synchronized external MT5 mobile trades into challenge tracking.")
+    except Exception as e:
+        print(f"Error syncing external MT5 mobile trades: {e}")
+def sync_external_mt5_mobile_trades():
+    """Scans MT5 history for closed mobile/external trades, skips duplicates, maps them to challenge dates, and records them."""
+    try:
+        conn = get_db_connection(DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT ticket FROM challenge_trades")
+        recorded_tickets = {row[0] for row in cursor.fetchall()}
+        
+        utc_from = datetime.now(timezone.utc) - timedelta(days=7)
+        deals = mt5.history_deals_get(utc_from, datetime.now(timezone.utc))
+
+        if not deals:
+            conn.close()
+            return
+
+        new_trades_found = False
+        affected_dates = set()
+
+        for deal in deals:
+            if deal.entry == mt5.DEAL_ENTRY_OUT:
+                ticket = deal.position_id
+                if ticket in recorded_tickets:
+                    continue
+
+                exit_price = float(deal.price)
+                pnl = float(deal.profit + deal.swap + deal.commission)
+                exit_reason = "MT5_MOBILE_TP" if pnl > 0 else "MT5_MOBILE_SL"
+                status = "CLOSED_PROFIT" if pnl > 0 else "CLOSED_LOSS"
+                action = "BUY" if deal.type == mt5.DEAL_TYPE_BUY else "SELL"
+                
+                deal_dt_utc = datetime.fromtimestamp(deal.time, timezone.utc)
+                from zoneinfo import ZoneInfo
+                deal_dt_et = deal_dt_utc.astimezone(ZoneInfo("America/New_York"))
+                date_str = deal_dt_et.strftime("%Y-%m-%d")
+                time_opened = deal_dt_et.strftime("%H:%M:%S")
+
+                cursor.execute("SELECT day_number, current_step FROM challenge_daily_status WHERE date_str = ?", (date_str,))
+                row = cursor.fetchone()
+                
+                if row:
+                    challenge_day = row[0]
+                    step_tier = row[1]
+                else:
+                    cursor.execute("SELECT day_number, current_step FROM challenge_daily_status ORDER BY id DESC LIMIT 1")
+                    latest = cursor.fetchone()
+                    challenge_day = latest[0] if latest else 1
+                    step_tier = latest[1] if latest else 1
+
+                entry_price = float(deal.price)
+
+                cursor.execute("""
+                    INSERT INTO challenge_trades 
+                    (date_str, time_opened, ticket, symbol, challenge_day, step_tier, action, lot_size, entry_price, exit_price, pnl, status, exit_reason)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    date_str, time_opened, ticket, deal.symbol, challenge_day, step_tier, 
+                    action, deal.volume, entry_price, exit_price, pnl, status, exit_reason
+                ))
+                
+                recorded_tickets.add(ticket)
+                affected_dates.add(date_str)
+                new_trades_found = True
+
+        conn.commit()
+        conn.close()
+
+        # EXECUTED ONLY WHEN NEW TRADES ARE SYNCED
+        if new_trades_found:
+            print(f"Successfully synchronized {len(affected_dates)} new batch(es) of MT5 mobile trades.")
+            for d_str in affected_dates:
+                update_daily_status_from_live_mt5(d_str)
+
+    except Exception as e:
+        print(f"Error syncing external MT5 mobile trades: {e}")
+def update_daily_status_from_live_mt5(date_str):
+    """Syncs challenge_daily_status directly against live MT5 account balance."""
+    if not mt5.initialize():
+        print("MT5 initialization failed for live balance sync.")
+        return
+
+    acct_info = mt5.account_info()
+    if acct_info is None:
+        print("Could not retrieve MT5 account info.")
+        return
+
+    live_balance = float(acct_info.balance)
+    live_equity = float(acct_info.equity)
+
+    conn = get_db_connection(DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT starting_balance FROM challenge_daily_status WHERE date_str = ?", (date_str,))
+    row = cursor.fetchone()
+    if row:
+        starting_bal = float(row[0])
+        daily_profit = live_balance - starting_bal
+        prog_pct = (daily_profit / starting_bal) * 100.0 if starting_bal > 0 else 0.0
+
+        cursor.execute("""
+            UPDATE challenge_daily_status 
+            SET current_balance = ?, 
+                high_water_mark = MAX(high_water_mark, ?), 
+                daily_profit = ?, 
+                progress_pct = ?
+            WHERE date_str = ?
+        """, (live_balance, max(live_balance, live_equity), daily_profit, prog_pct, date_str))
+        conn.commit()
+        print(f"Updated daily status for {date_str}: Live MT5 Balance = ${live_balance:.2f}, Daily Profit = ${daily_profit:.2f}")
+    
+    conn.close()
 def sync_closed_challenge_trades():
     """Scans MT5 history for closed challenge tickets and updates their final PnL, exit price, and status."""
     try:
@@ -475,7 +633,7 @@ def sync_closed_challenge_trades():
             conn.close()
             return
 
-        utc_from = datetime.now(timezone.utc) - timedelta(days=7)
+        utc_from = datetime.now(timezone.utc) - timedelta(hours=1)
         deals = mt5.history_deals_get(utc_from, datetime.now(timezone.utc))
 
         if not deals:

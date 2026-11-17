@@ -77,6 +77,11 @@ if MT5_SYMBOL not in SUPPORTED_SYMBOLS:
 DEFAULT_SYMBOL = MT5_SYMBOL
 MAX_OPEN_POSITIONS = 5
 MT5_MAGIC_NUMBER = 123456
+# Number of candles (and aligned indicator values) sent to the dashboard per timeframe.
+# The in-memory cache holds up to 300 bars, so 300 is the maximum available.
+CHART_CANDLE_LIMIT = 300
+# bullish_pressure is measured over the most recent candles only, independent of the chart window.
+PRESSURE_WINDOW = 75
 DB_PATH = os.path.join(PROJECT_DIR, "trade_telemetry.sqlite")
 CSV_LOG_PATH = os.path.join(PROJECT_DIR, "multi_timeframe_trade_log.csv")
 
@@ -243,6 +248,9 @@ connected_ui_clients = set()
 latest_state_payload = None
 mt5_bridge = MT5Bridge(symbol=DEFAULT_SYMBOL, symbols=list(SUPPORTED_SYMBOLS))
 mt5_state_lock = threading.Lock()
+# Serializes /api/execute-trade so the open-position check and the order that follows it are one
+# atomic step. Without it, a burst of requests all see the same position count and overshoot the cap.
+order_dispatch_lock = threading.Lock()
 latest_mt5_account = {}
 latest_mt5_status = mt5_bridge.status()
 last_auto_evaluated_candle_times: dict[str, str] = {}
@@ -334,6 +342,23 @@ def get_true_previous_day_ohlc(symbol: str = DEFAULT_SYMBOL):
     symbol_price = current_prices.get(symbol, 0.0)
     return symbol_price, symbol_price
 
+def _chart_series(series, fallback):
+    """Indicator values for the dashboard chart.
+
+    Values that cannot be computed yet (the warm-up at the start of the window, e.g. the first 199
+    bars of EMA200) are sent as null so the chart shows a gap. Previously they were filled with the
+    latest close, which drew a flat line that suddenly jumped to the real value. If nothing at all is
+    computable yet, the old fill is kept so consumers reading the last value still get a number.
+    """
+    values = series.tolist()
+    usable = lambda v: v is not None and v == v          # pandas_ta may return None as well as NaN
+    first_valid = next((i for i, v in enumerate(values) if usable(v)), None)
+    if first_valid is None:
+        return [round(fallback, 3)] * len(values)
+    return [None if i < first_valid else (round(v, 3) if usable(v) else round(fallback, 3))
+            for i, v in enumerate(values)]
+
+
 def process_dataframe(df, symbol: str = DEFAULT_SYMBOL):
     if df is None or len(df) < 5:
         p_open, p_close = get_true_previous_day_ohlc(symbol)
@@ -420,12 +445,19 @@ def process_dataframe(df, symbol: str = DEFAULT_SYMBOL):
     prev_open, prev_close = get_true_previous_day_ohlc(symbol)
 
     candles_list = []
-    tail_df = df.tail(75)
-    for idx, row in tail_df.iterrows():
-        o, h, l, c = float(row['open']), float(row['high']), float(row['low']), float(row['close'])
+    tail_df = df.tail(CHART_CANDLE_LIMIT)
+    # Built from plain lists instead of DataFrame.iterrows(), which is ~8x slower and runs for
+    # every symbol/timeframe on each one-second broadcast.
+    time_values = tail_df['time'].tolist() if 'time' in tail_df.columns else tail_df.index.tolist()
+    for time_val, o, h, l, c in zip(
+        time_values,
+        tail_df['open'].to_numpy(dtype=float).tolist(),
+        tail_df['high'].to_numpy(dtype=float).tolist(),
+        tail_df['low'].to_numpy(dtype=float).tolist(),
+        tail_df['close'].to_numpy(dtype=float).tolist(),
+    ):
         body = abs(c - o)
         range_len = h - l if h != l else 0.001
-        
         pattern = "Normal"
         if body / range_len < 0.12: pattern = "Doji"
         elif (c > o) and ((o - l) > 2 * body): pattern = "Hammer / Bullish Pinbar"
@@ -433,27 +465,23 @@ def process_dataframe(df, symbol: str = DEFAULT_SYMBOL):
         elif body / range_len > 0.75: pattern = "Impulse Marubozu"
         elif c > o: pattern = "Mild Bullish"
         else: pattern = "Mild Bearish"
-
-        time_val = row['time'] if 'time' in row else idx
-
         candles_list.append({
             "time": time_val,
             "open": round(o, 3), "high": round(h, 3), "low": round(l, 3), "close": round(c, 3), "pattern": pattern
         })
-
-    bullish_count = sum(1 for c in candles_list if c['close'] >= c['open'])
-    pressure = int((bullish_count / len(candles_list)) * 100) if len(candles_list) > 0 else 50
-
+    recent_candles = candles_list[-PRESSURE_WINDOW:]
+    bullish_count = sum(1 for c in recent_candles if c['close'] >= c['open'])
+    pressure = int((bullish_count / len(recent_candles)) * 100) if len(recent_candles) > 0 else 50
     return {
         "data_ready": len(df) >= 200,
         "trend": trend, "ema20": ema20_val, "ema30": ema30_val, "ema100": ema100_val, "ema200": ema200_val,
         "rsi": rsi_val, "atr": atr_val, "adx": adx_val, "bullish_pressure": pressure, "candles": candles_list,
-        "bb_upper": [round(x, 3) for x in tail_df['bb_upper'].fillna(close_val).tolist()],
-        "bb_middle": [round(x, 3) for x in tail_df['bb_middle'].fillna(close_val).tolist()],
-        "bb_lower": [round(x, 3) for x in tail_df['bb_lower'].fillna(close_val).tolist()],
-        "ema20_history": [round(x, 3) for x in tail_df['ema20'].fillna(close_val).tolist()],
-        "ema30_history": [round(x, 3) for x in tail_df['ema30'].fillna(close_val).tolist()],
-        "ema100_history": [round(x, 3) for x in tail_df['ema100'].fillna(close_val).tolist()],
+        "bb_upper": _chart_series(tail_df['bb_upper'], close_val),
+        "bb_middle": _chart_series(tail_df['bb_middle'], close_val),
+        "bb_lower": _chart_series(tail_df['bb_lower'], close_val),
+        "ema20_history": _chart_series(tail_df['ema20'], close_val),
+        "ema30_history": _chart_series(tail_df['ema30'], close_val),
+        "ema100_history": _chart_series(tail_df['ema100'], close_val),
         "atr_history": [round(x, 3) for x in tail_df['atr'].fillna(1.0).tolist()],
         "adx_history": [round(x, 1) for x in tail_df['adx'].fillna(20.0).tolist()],
         "rsi_history": [round(x, 1) for x in tail_df['rsi'].fillna(50).tolist()],
@@ -462,9 +490,9 @@ def process_dataframe(df, symbol: str = DEFAULT_SYMBOL):
         "prev_day_open": round(prev_open, 3),
         "prev_day_close": round(prev_close, 3),
         "ema50": round(float(latest['ema50'] if pd.notna(latest['ema50']) else close_val), 3),
-        "ema50_history": [round(x, 3) for x in tail_df['ema50'].fillna(close_val).tolist()],
+        "ema50_history": _chart_series(tail_df['ema50'], close_val),
         "ema200": round(float(latest['ema200'] if pd.notna(latest['ema200']) else close_val), 3),
-        "ema200_history": [round(x, 3) for x in tail_df['ema200'].fillna(close_val).tolist()]
+        "ema200_history": _chart_series(tail_df['ema200'], close_val)
     }
 def check_and_sync_closed_telemetry_trades():
     """Polls MT5 history to update closed trades in trade_telemetry and compounding challenge."""
@@ -1224,24 +1252,18 @@ def refresh_mt5_state():
     with mt5_state_lock:
         latest_mt5_account = account or {}
         latest_mt5_status = status
-
 def mt5_monitor_loop():
     history_loaded = False
     last_history_attempt = 0.0
     while True:
         refresh_mt5_state()
-        check_and_sync_closed_telemetry_trades()  # Syncs trade_telemetry & challenge db
+        check_and_sync_closed_telemetry_trades()
         
         try:
-            # Explicitly synchronize and evaluate challenge metrics against live account balance
             compounding_challenge.sync_closed_challenge_trades()
-            
-            with mt5_state_lock:
-                current_acct_balance = float(latest_mt5_account.get("balance", 200.0))
-                current_acct_equity = float(latest_mt5_account.get("equity", current_acct_balance))
-            
-            tracker = compounding_challenge.CompoundingChallengeTracker(initial_capital=current_acct_balance)
-            tracker.evaluate_day(simulated_pnl=current_acct_equity - current_acct_balance)
+            if hasattr(compounding_challenge, "sync_external_mt5_mobile_trades"):
+                compounding_challenge.sync_external_mt5_mobile_trades()
+                
         except Exception as e:
             print(f"Background challenge evaluation/sync error: {e}")
         
@@ -1538,6 +1560,14 @@ class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
         return SimpleHTTPRequestHandler.do_GET(self)
 
     def do_POST(self):
+        try:
+            self._do_POST_inner()
+        finally:
+            if getattr(self, '_order_lock_held', False):
+                self._order_lock_held = False
+                order_dispatch_lock.release()
+
+    def _do_POST_inner(self):
         global agent_status, latest_mt5_account, latest_mt5_status
         if not self._is_local_dashboard_request():
             self.send_error(403, "Requests must originate from the local dashboard.")
@@ -1655,6 +1685,11 @@ class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
                 self._send_json(403, {"status": "REJECTED", "message": risk_error})
                 return
 
+            if not order_dispatch_lock.acquire(timeout=15):
+                self._send_json(503, {"status": "REJECTED", "message": "Another order is still being processed. Try again."})
+                return
+            self._order_lock_held = True
+
             account_state, bridge_status = mt5_bridge.account_snapshot()
             with mt5_state_lock:
                 latest_mt5_account = account_state or {}
@@ -1666,6 +1701,16 @@ class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
             risk_allowed, risk_message = check_daily_loss_limit(account_state)
             if not risk_allowed:
                 self._send_json(503, {"status": "REJECTED", "message": risk_message})
+                return
+
+            # Authoritative position cap: counted from a fresh MT5 snapshot taken while holding the lock,
+            # so it includes every order accepted a moment ago (unlike the dashboard's once-a-second view).
+            open_position_count = len(account_state.get("positions") or [])
+            if open_position_count >= MAX_OPEN_POSITIONS:
+                self._send_json(409, {
+                    "status": "REJECTED",
+                    "message": f"Maximum open positions limit ({MAX_OPEN_POSITIONS}) reached."
+                })
                 return
 
             symbol = payload.get("symbol") or MT5_SYMBOL
@@ -1754,6 +1799,9 @@ class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
                 tp=tp,
                 max_allowed_spread_multiplier=1.5
             )
+            if getattr(self, '_order_lock_held', False):     # the order is placed; let the next request in
+                self._order_lock_held = False
+                order_dispatch_lock.release()
 
             if not succeeded:
                 self._send_json(400, {"status": "REJECTED", "message": message})

@@ -1936,7 +1936,7 @@ def run_websocket_server():
         except:
             pass
         finally:
-            connected_ui_clients.remove(websocket_conn)
+            connected_ui_clients.discard(websocket_conn)  # Changed from .remove() to .discard()
 
     try:
         with serve(
@@ -1946,7 +1946,6 @@ def run_websocket_server():
             server.serve_forever()
     except Exception as e:
         print(f"WS Server note: {e}")
-
 def main():
     global LIVE_TRADING_ENABLED, AUTO_TRADING_ENABLED, agent_status
     parser = argparse.ArgumentParser(description="Run the local MT5 dashboard and market-data engine.")

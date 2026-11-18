@@ -2,12 +2,11 @@
 setlocal
 cd /d "%~dp0"
 
+:: 1. Explicitly check if venv python exists
 set "PYTHON=%~dp0.venv\Scripts\python.exe"
 if not exist "%PYTHON%" (
-    echo Project virtual environment not found: "%PYTHON%"
-    echo Install the project dependencies first. See README.md section 5.
-    pause
-    exit /b 1
+    :: Fallback to global python if venv isn't found in that specific folder
+    set "PYTHON=python"
 )
 
 echo ========================================================
@@ -54,7 +53,8 @@ echo Minimize MT5 if you do not want its window in the foreground.
 echo Keep this window open; press Ctrl+C here to stop the engine.
 echo.
 
-"%PYTHON%" "%~dp0Enhanced_Derive_AI_Engine.py" --style SCALPING --enable-live-trading --enable-auto-trading
+:: 2. Ensure %PYTHON% and %STYLE% are cleanly wrapped
+"%PYTHON%" "%~dp0Enhanced_Derive_AI_Engine.py" --style %STYLE% --enable-live-trading --enable-auto-trading
 set "EXIT_CODE=%ERRORLEVEL%"
 
 echo.

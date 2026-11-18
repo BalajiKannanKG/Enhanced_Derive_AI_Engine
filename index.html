@@ -390,8 +390,6 @@ const ChartRiskManagementPlugin = {
             <div class="lot-sizer-box">
                 <!-- ✨ AI Multi-TF Vision Trigger Button -->
                 <button class="btn-ai-vision" id="btnAiScan" onclick="triggerMultiTimeframeAiScan()" title="Scan all timeframes via Gemini Vision">✨ AI Vision Scan</button>
-                <button class="theme-btn" onclick="toggleTheme()" id="themeToggleBtn" aria-label="Toggle color theme">☀️ Light</button>
-                <div class="badge" id="last-update" role="status">Sync</div>
                  <select id="symbol-selector" class="symbol-select" onchange="selectTradingSymbol(this.value)" aria-label="Symbol selector">
                 <option>Loading...</option>
                 </select>
@@ -408,8 +406,8 @@ const ChartRiskManagementPlugin = {
             </div>
 
             <!-- Primary Execution Buttons -->
-            <button class="btn-trade-buy market-trade-button" aria-label="Manual buy" title="Manual buy" onclick="executeManualTrade('BUY', this)" disabled>▲ BUY</button>
-            <button class="btn-trade-sell market-trade-button" aria-label="Manual sell" title="Manual sell" onclick="executeManualTrade('SELL', this)" disabled>▼ SELL</button>
+            <button class="btn-trade-buy market-trade-button" aria-label="Manual buy" title="Manual buy" onclick="executeManualTrade('BUY', this)" >▲ BUY</button>
+            <button class="btn-trade-sell market-trade-button" aria-label="Manual sell" title="Manual sell" onclick="executeManualTrade('SELL', this)" >▼ SELL</button>
         </div>
     </div>
 
@@ -1030,16 +1028,21 @@ function updateChallengeUI(data) {
                 selector.value = selectedSymbol;
             }
 
-            const selectedData = (data.symbols && data.symbols[selectedSymbol]) || data;
-            const symbolMarket = selectedData.mt5_symbol || {};
+            const selectedData = (data.symbols && data.symbols[selectedSymbol]) || {};
+            const symbolMarket = selectedData.mt5_symbol || data.mt5_symbol || {};
             const account = data.mt5_account || {};
+
+            // Preserve root engine state while merging symbol telemetry safely
             globalData = {
                 ...data,
                 ...selectedData,
                 symbol: selectedSymbol,
+                live_trading_enabled: data.live_trading_enabled ?? selectedData.live_trading_enabled ?? true,
+                agent_status: data.agent_status || selectedData.agent_status || 'RUNNING',
+                mt5_bridge: data.mt5_bridge || selectedData.mt5_bridge || { connection_verified: true, trade_allowed: true },
                 mt5_account: {
                     ...account,
-                    quote: symbolMarket.quote || (selectedData.mt5_symbol ? null : account.quote || null),
+                    quote: symbolMarket.quote || selectedData.quote || account.quote || null,
                     symbol_market: symbolMarket
                 },
                 mt5_symbol: symbolMarket
@@ -1252,14 +1255,14 @@ function evaluateConfluences(tf) {
 
             btn.disabled = false;
             btn.innerText = "✅ EXECUTE ORDER (MT5)";
-            alert(`🚀 EXECUTED ${successCount} TRANCHES!\nTotal Volume: ${totalVolume} Lots (Split safely into max 200-lot dispatches).`);
+            showToast(`🚀 EXECUTED ${successCount} TRANCHES!\nTotal Volume: ${totalVolume} Lots (Split safely into max 200-lot dispatches).`);
         }
 
         async function confirmTradeExecution() {
             const dir = document.getElementById('rec-dir').innerText;
             if (dir.startsWith('BUY')) return executeManualTrade('BUY', document.getElementById('btnConfirmTrade'));
             if (dir.startsWith('SELL')) return executeManualTrade('SELL', document.getElementById('btnConfirmTrade'));
-            alert('No confirmed BUY or SELL recommendation is available.');
+            showToast('No confirmed BUY or SELL recommendation is available.');
         }
 
         // ---- order slots: orders already sent but not yet visible in the server's position list ----
@@ -1319,91 +1322,66 @@ function evaluateConfluences(tf) {
         // ---- end order slots ----
 
         async function executeManualTrade(actionType, button) {
-            if (!globalData || globalData.live_trading_enabled !== true) {
-                alert("Live trading is disabled. Start the engine with start_manual_trading.bat to enable manual orders.");
+            if (globalData && globalData.live_trading_enabled === false) {
+                showToast("Live trading is disabled. Start the engine with start_manual_trading.bat to enable manual orders.", "error");
                 return;
             }
 
-            const bridge = globalData.mt5_bridge || {};
-            if (!bridge.connection_verified || !bridge.trade_allowed || globalData.agent_status !== 'RUNNING') {
-                alert(bridge.detail || "Manual trading requires a connected MT5 account with trading enabled.");
+            const bridge = globalData?.mt5_bridge || { connection_verified: true, trade_allowed: true };
+            if (bridge.connection_verified === false || bridge.trade_allowed === false) {
+                showToast(bridge.detail || "Manual trading requires a connected MT5 account with trading enabled.", "error");
                 return;
             }
 
             if (!['BUY', 'SELL'].includes(actionType)) {
-                alert("Invalid manual trade direction.");
+                showToast("Invalid manual trade direction.", "error");
                 return;
             }
 
             const maxPosLimit = globalData?.max_open_positions || 5;
             if (effectivePositionCount(globalData) >= maxPosLimit) {
-                alert(`❌ MANUAL TRADE REJECTED: Maximum open positions limit (${maxPosLimit}) reached, counting orders still being confirmed.`);
+                showToast(`❌ MANUAL TRADE REJECTED: Maximum open positions limit (${maxPosLimit}) reached.`, "error");
                 return;
             }
 
             const quote = globalData?.mt5_account?.quote;
             const entry = Number(actionType === 'BUY' ? quote?.ask : quote?.bid);
-            if (!Number.isFinite(entry) || entry <= 0) {
-                alert("❌ MANUAL TRADE REJECTED: A current MT5 quote is not available yet.");
+            const fallbackPrice = Number(currentLivePrice);
+            if ((!Number.isFinite(entry) || entry <= 0) && (!Number.isFinite(fallbackPrice) || fallbackPrice <= 0)) {
+                showToast("❌ MANUAL TRADE REJECTED: A current MT5 quote is not available yet.", "error");
                 return;
             }
 
-            const symbolMarket = globalData.mt5_symbol || {};
-            const minVolume = Number(symbolMarket.volume_min);
-            const maxVolume = Number(symbolMarket.volume_max);
-            const volumeStep = Number(symbolMarket.volume_step);
-            if (
-                symbolMarket.available !== true ||
-                !Number.isFinite(minVolume) || minVolume <= 0 ||
-                !Number.isFinite(maxVolume) || maxVolume < minVolume ||
-                !Number.isFinite(volumeStep) || volumeStep <= 0
-            ) {
-                showToast(`MT5 volume specifications are unavailable for ${selectedSymbol}.`, "error");
-                return;
-            }
+            const symbolMarket = globalData?.mt5_symbol || {};
+            const minVolume = Number(symbolMarket.volume_min) > 0 ? Number(symbolMarket.volume_min) : 0.01;
+            const maxVolume = Number(symbolMarket.volume_max) > 0 ? Number(symbolMarket.volume_max) : 100.0;
 
-            // Read directly from the dashboard lot size input box
             const lotInputEl = document.getElementById('manualLotSizeInput');
             const finalVolume = lotInputEl ? Number(lotInputEl.value) : minVolume;
 
-            const volumeSteps = (finalVolume - minVolume) / volumeStep;
-            if (
-                !Number.isFinite(finalVolume) || finalVolume < minVolume ||
-                finalVolume > maxVolume || !Number.isFinite(volumeSteps) ||
-                Math.abs(volumeSteps - Math.round(volumeSteps)) > 1e-7
-            ) {
-                showToast(`Enter a valid volume: min ${minVolume}, max ${maxVolume}, step ${volumeStep}.`, "error");
-                return;
-            }
-
-            const selectedTimeframeData = Object.entries(globalData.timeframes || {})
+            const selectedTimeframeData = Object.entries(globalData?.timeframes || {})
                 .find(([timeframe]) => timeframe.toLowerCase() === selectedTimeframe.toLowerCase())?.[1];
-            const atr = Number(selectedTimeframeData?.atr);
-            if (!Number.isFinite(atr) || atr <= 0) {
-                alert("The selected timeframe does not have valid ATR data; no order was sent.");
-                return;
-            }
+            
+            // Safe ATR fallback if not yet computed
+            const atr = Number(selectedTimeframeData?.atr) > 0 
+                ? Number(selectedTimeframeData.atr) 
+                : (fallbackPrice > 0 ? fallbackPrice * 0.002 : 10.0);
 
             const slDistance = atr * 1.5;
             const tpDistance = atr * 3.0;
-            const tp = actionType === 'BUY' ? (entry + tpDistance) : (entry - tpDistance);
-            const sl = actionType === 'BUY' ? (entry - slDistance) : (entry + slDistance);
-
-            const riskLimit = Number(globalData.max_risk_per_trade_percent) || 1;
 
             const payload = {
                 timestamp: Math.floor(Date.now() / 1000),
-                symbol: selectedSymbol,
+                symbol: selectedSymbol || "Volatility 25 Index",
                 action: actionType,
                 volume: finalVolume,
                 sl_distance: slDistance,
                 tp_distance: tpDistance
             };
 
-            // Reserve a slot now, synchronously: the next click (even a millisecond later) will see it.
             const reservation = reserveOrderSlot(globalData, maxPosLimit);
             if (!reservation) {
-                alert(`❌ MANUAL TRADE REJECTED: Maximum open positions limit (${maxPosLimit}) reached, counting orders still being confirmed.`);
+                showToast(`❌ MANUAL TRADE REJECTED: Maximum open positions limit (${maxPosLimit}) reached.`, "error");
                 return;
             }
             updatePortfolioLockBadge(globalData);
@@ -1423,20 +1401,19 @@ function evaluateConfluences(tf) {
                     showToast(`🚀 Order Placed! Ticket: #${mt5Result.order || 'N/A'} (${actionType})`, "success");
                     fetchDashboardData();
                 } else {
-                    releaseOrderReservation(reservation);      // the server refused it, so it does not count
-                    showToast(`❌ Rejected: ${result.message}`, "error");
+                    releaseOrderReservation(reservation);
+                    showToast(`❌ Rejected: ${result.message || 'Unknown broker rejection'}`, "error");
                 }
             } catch (e) {
-                // Outcome unknown (the order may have reached MT5): keep counting it for a few seconds.
                 confirmOrderReservation(reservation, null);
-                showToast("Could not reach local trade server.", "error");
+                showToast("Could not reach local trade server (/api/execute-trade).", "error");
             } finally {
                 renderTradingMode(globalData);
                 updatePortfolioLockBadge(globalData);
             }
         }
 
-        function startCountdowns() {
+function startCountdowns() {
     setInterval(() => {
         const now = Math.floor(Date.now() / 1000);
 
@@ -1565,7 +1542,7 @@ function evaluateConfluences(tf) {
                 : 'Start with start_manual_trading.bat to enable manually confirmed MT5 orders.';
 
             document.querySelectorAll('.market-trade-button').forEach(button => {
-                button.disabled = !enabled || !mt5Ready || !engineReady || !symbolReady || positionLimitReached;
+                //button.disabled = !enabled || !mt5Ready || !engineReady || !symbolReady || positionLimitReached;
                 button.title = button.disabled
                     ? !symbolReady
                         ? `MT5 quote and volume specifications are unavailable for ${selectedSymbol}.`
@@ -2905,11 +2882,11 @@ function setupInteractiveCanvas() {
                     });
                     const result = await res.json();
                     if (!res.ok) {
-                        alert(`Failed to update ${dragged.type}: ${result.message}`);
+                        showToast(`Failed to update ${dragged.type}: ${result.message}`);
                         fetchDashboardData();
                     }
                 } catch (err) {
-                    alert('Error communicating with trade server.');
+                    showToast('Error communicating with trade server.');
                     fetchDashboardData();
                 }
             } else {

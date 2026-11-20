@@ -6,6 +6,7 @@ import math
 import os
 import re
 import sys
+import sqlite3
 import threading
 import time
 from datetime import datetime, timezone
@@ -19,7 +20,14 @@ import MetaTrader5 as mt5  # <--- Ensure MetaTrader5 is explicitly imported here
 from mt5_bridge import MT5Bridge
 from websockets.sync.server import serve
 import compounding_challenge
+import time
+import random
+import base64
+import json
+from google import genai
+from google.genai import types
 import asyncio
+import random
 
 from industrial_scanner import perform_industrial_technical_scan, evaluate_institutional_confluences
 
@@ -53,7 +61,8 @@ def background_industrial_monitoring_loop():
         except Exception as e:
             print(f"⚠️ Error in background monitoring loop: {e}")
             time.sleep(5)
-
+import json
+import websockets
 
 async def handle_websocket_telemetry(websocket, path):
     """
@@ -555,6 +564,7 @@ def process_dataframe(df, symbol: str = DEFAULT_SYMBOL):
         "prev_day_close": round(prev_close, 3),
         "ema50": round(float(latest['ema50'] if pd.notna(latest['ema50']) else close_val), 3),
         "ema50_history": _chart_series(tail_df['ema50'], close_val),
+        "ema200": round(float(latest['ema200'] if pd.notna(latest['ema200']) else close_val), 3),
         "ema200_history": _chart_series(tail_df['ema200'], close_val)
     }
 def check_and_sync_closed_telemetry_trades():
@@ -906,7 +916,7 @@ def evaluate_multi_path_strategy(
         "regime": regime,
         "consensus_score": total_score,
         "active_paths": active_paths,
-        "reasoning": f"Style: {ACTIVE_TRADING_STYLE} | Regime: {regime} | SessionWt: {session_weight:.2f} | Score: {total_score} (Threshold: ±{min_score})"
+        "reasoning": f"Style: {ACTIVE_TRADING_STYLE} | Regime: {regime} | SessionWt: {session_weight:.2f} | Score: {total_score} (Threshold: �{min_score})"
     }
 
     action = None
@@ -1462,12 +1472,37 @@ def broadcast_state_update():
                 else:
                     timeframes_dict[timeframe] = {}
 
-            symbol_states[symbol] = {
-                "timeframes": timeframes_dict,
-                "current_price": current_prices.get(symbol, 0.0)
-            }
+            cpr = calculate_cpr(caches.get("d1"))
+            sym_price = current_prices.get(symbol, 0.0)
+            tf_data = timeframes_dict.get(primary_tf, {})
+            higher_tf_data = timeframes_dict.get(confluence_tf, {})
 
-        agent_status = "RUNNING" if AUTO_TRADING_ENABLED else "IDLE"
+            action, audit = "HOLD / SCANNING", {
+                "regime": "SCANNING",
+                "consensus_score": 0,
+                "active_paths": [],
+                "reasoning": "Waiting for market data."
+            }
+            if sym_price > 0 and tf_data and higher_tf_data:
+                action_eval, audit_eval = evaluate_multi_path_strategy(
+                    tf_data, higher_tf_data, sym_price, cpr, timeframes_dict
+                )
+                if action_eval:
+                    action = action_eval
+                if audit_eval:
+                    audit = audit_eval
+
+            symbol_states[symbol] = {
+                "symbol": symbol,
+                "market_data_symbol": symbol,
+                "market_data_source": "MT5",
+                "current_price": sym_price,
+                "signal": action,
+                "cpr": cpr,
+                "timeframes": timeframes_dict,
+                "decision_audit": audit,
+                "mt5_symbol": mt5_account_data.get("symbols", {}).get(symbol, {}),
+            }
 
         # --- Build Real-Time MTF Matrix Data ---
         default_tf_data = symbol_states.get(DEFAULT_SYMBOL, {}).get("timeframes", {})
@@ -1508,17 +1543,20 @@ def broadcast_state_update():
             "matrix": matrix_data
         }
 
+        default_state = symbol_states[DEFAULT_SYMBOL]
+        for field in ("current_price", "signal", "cpr", "timeframes", "decision_audit"):
+            state_data[field] = default_state[field]
+
         latest_state_payload = json.dumps(state_data)
 
-    # Broadcast to all connected WebSocket clients using connected_ui_clients
-    if connected_ui_clients:
-        websockets_to_remove = set()
-        for ws in connected_ui_clients:
-            try:
-                asyncio.run_coroutine_threadsafe(ws.send(latest_state_payload), ws.loop)
-            except Exception as e:
-                websockets_to_remove.add(ws)
-        for ws in websockets_to_remove:
+    # Push the new state to every connected browser. The server uses the synchronous websockets API, where
+    # send() is an ordinary blocking call. (The previous code treated the connection as asyncio-based and read
+    # ws.loop, which does not exist: that raised after the first message and dropped the client, so the
+    # dashboard only updated once per page load.)
+    for ws in list(connected_ui_clients):
+        try:
+            ws.send(latest_state_payload)
+        except Exception:
             connected_ui_clients.discard(ws)
                      
 class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):

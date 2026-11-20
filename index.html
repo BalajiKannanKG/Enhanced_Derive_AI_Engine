@@ -389,7 +389,7 @@ const ChartRiskManagementPlugin = {
             <!-- Dynamic Lot Sizer with Steppers and Presets -->
             <div class="lot-sizer-box">
                 <!-- ✨ AI Multi-TF Vision Trigger Button -->
-                <button class="btn-ai-vision" id="btnAiScan" onclick="triggerMultiTimeframeAiScan()" title="Scan all timeframes with the local Industrial Scanner">✨ AI Vision Scan</button>
+                <button class="btn-ai-vision" id="btnAiScan" onclick="triggerMultiTimeframeAiScan()" title="Scan all timeframes via Gemini Vision">✨ AI Vision Scan</button>
                  <select id="symbol-selector" class="symbol-select" onchange="selectTradingSymbol(this.value)" aria-label="Symbol selector">
                 <option>Loading...</option>
                 </select>
@@ -436,7 +436,7 @@ const ChartRiskManagementPlugin = {
             <div class="chart-metrics">
                 <div class="metric-row"><span>Trend:</span> <span class="metric-value" id="tf-trend">---</span></div>
                 <div class="metric-row"><span>EMA 20/50/200:</span> <span class="metric-value" id="tf-ema" style="font-size:0.52rem;">---</span></div>
-                <div class="metric-row"><span>RSI(14) / ATR:</span> <span class="metric-value"><span id="tf-rsi">---</span> / <span id="tf-atr">---</span></span></div>
+                <div class="metric-row"><span>RSI(10) / ATR:</span> <span class="metric-value"><span id="tf-rsi">---</span> / <span id="tf-atr">---</span></span></div>
                 <div class="metric-row"><span>Pressure:</span> <span class="metric-value" id="tf-pressure">---</span></div>
             </div>
 
@@ -453,7 +453,7 @@ const ChartRiskManagementPlugin = {
             </div>
 
             <div class="oscillator-labels" style="font-size: 0.55rem; color: var(--text-muted); margin-top:2px; display:flex; justify-space-between;">
-                <span>RSI (14) [OB: 85 / OS: 15]</span>
+                <span>RSI (10) [OB: 85 / OS: 15]</span>
                 <span style="color: var(--accent-pink);">Stochastic (%K 16, %D 3)</span>
             </div>
             <div class="oscillator-charts">
@@ -817,6 +817,7 @@ function updateChallengeUI(data) {
         let activeSrTargetVal = 0;
         let currentLivePrice = 0;
         let uiWebSocketConnected = false;
+        let lastWsMessageAt = 0;                 // when the last push arrived; used to detect a silent (open but stalled) socket
         let selectedTimeframe = '5m';
         let candleIntervalSeconds = 300;
         
@@ -974,7 +975,7 @@ function updateChallengeUI(data) {
             const lotInput = document.getElementById('manualLotSizeInput');
             const volume = lotInput ? parseFloat(lotInput.value) || 0.10 : 0.10;
             
-            showToast(`🚀 Executing Scanner ${action} Order (${volume} Lots)...`, "info");
+            showToast(`🚀 Executing Gemini AI ${action} Order (${volume} Lots)...`, "info");
             executeManualTrade(action, document.getElementById('btnAiScan'));
         }
         // Non-blocking Toast notification system for rapid multi-clicking
@@ -2584,15 +2585,15 @@ function renderFactorBreakdown(factorsObj) {
                     if (y >= chart.chartArea.top && y <= chart.chartArea.bottom) {
                         ctx.beginPath();
                         ctx.strokeStyle = color;
-                        ctx.lineWidth = 3;
+                        ctx.lineWidth = 1;
                         ctx.setLineDash([]);
                         ctx.moveTo(chart.chartArea.left, y);
                         ctx.lineTo(chart.chartArea.right, y);
                         ctx.stroke();
 
-                        ctx.font = 'bold 10px Segoe UI';
+                        ctx.font = 'bold 6px Segoe UI';
                         const textWidth = ctx.measureText(labelText).width;
-                        const badgeX = chart.chartArea.right - textWidth - 16;
+                        const badgeX = chart.chartArea.left - textWidth - 16;
                         const badgeY = y - 11;
 
                         ctx.fillStyle = isDark ? 'rgba(11, 15, 25, 0.9)' : 'rgba(255, 255, 255, 0.9)';
@@ -2604,7 +2605,7 @@ function renderFactorBreakdown(factorsObj) {
 
                         ctx.fillStyle = color;
                         ctx.textAlign = 'right';
-                        ctx.fillText(labelText, chart.chartArea.right - 10, y - 1);
+                        ctx.fillText(labelText, chart.chartArea.left - 10, y - 1);
                     }
                 }
 
@@ -2782,8 +2783,8 @@ function renderFactorBreakdown(factorsObj) {
 
                         ctx.fillStyle = isDark ? '#c59b43' : '#80590a';
                         ctx.font = '600 8px Segoe UI';
-                        ctx.textAlign = 'right';
-                        ctx.fillText(`📍 Custom: ${linePrice.toFixed(3)} [Click to delete]`, chart.chartArea.right - 10, y - 4);
+                        ctx.textAlign = 'left';
+                        ctx.fillText(`📍 Custom: ${linePrice.toFixed(3)} [Click to delete]`, chart.chartArea.left - 10, y - 4);
                     }
                 });
 
@@ -3174,7 +3175,7 @@ function setupInteractiveCanvas() {
                     data: {
                         labels: labels,
                         datasets: [
-                            { label: 'RSI (14)', data: rsiSlice, borderColor: '#ec4899', borderWidth: 1, pointRadius: 0, fill: false, order: 1 },
+                            { label: 'RSI (10)', data: rsiSlice, borderColor: '#ec4899', borderWidth: 1, pointRadius: 0, fill: false, order: 1 },
                             { label: 'OB (85)', data: obArray, borderColor: 'rgba(239, 68, 68, 0.6)', borderDash: [2,2], borderWidth: 1, pointRadius: 0, fill: false, order: 2 },
                             { label: 'OS (15)', data: osArray, borderColor: 'rgba(16, 185, 129, 0.6)', borderDash: [2,2], borderWidth: 1, pointRadius: 0, fill: false, order: 2 }
                         ]
@@ -3237,6 +3238,7 @@ function setupInteractiveCanvas() {
     };
 
     ws.onmessage = function(event) {
+        lastWsMessageAt = Date.now();
         const state = JSON.parse(event.data);
         renderDashboardState(state);
         if (state.matrix) {
@@ -3252,7 +3254,8 @@ function setupInteractiveCanvas() {
 
         fetchDashboardData();
         setInterval(() => {
-            if (!uiWebSocketConnected) fetchDashboardData();
+            // Poll when the socket is down, and also when it is open but has gone quiet (pushes arrive every second).
+            if (!uiWebSocketConnected || Date.now() - lastWsMessageAt > 4000) fetchDashboardData();
         }, 3000);
         connectUIWebSocket();
         startCountdowns();

@@ -7,13 +7,15 @@ name = "enhanced_derive_ai_engine"
 version = "0.1.0"
 dependencies = [
     "pandas>=2.0",
+    "numpy",
     "pandas-ta",
-    "websockets",
+    "websockets>=11",
     "MetaTrader5>=5.0.45",
+    "tzdata; platform_system == 'Windows'",
 ]
 
 [tool.setuptools]
-py-modules = ["Enhanced_Derive_AI_Engine", "mt5_bridge"]
+py-modules = ["Enhanced_Derive_AI_Engine", "mt5_bridge", "industrial_scanner", "compounding_challenge", "trading_modules"]
 
 [project.scripts]
 run-engine = "Enhanced_Derive_AI_Engine:main"

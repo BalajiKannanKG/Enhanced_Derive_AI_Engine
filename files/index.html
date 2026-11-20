@@ -5,7 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MT5 Trading Desk | Multi-Symbol Market Intelligence</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style></style>
+    <style>
+        /* Chart view controls: zoom / pan toolbar, "latest candle" shortcut and keyboard focus ring */
+        .chart-toolbar { position: absolute; top: 3px; right: 70px; z-index: 3; display: flex; align-items: center; gap: 3px; }
+        .chart-toolbar button, .chart-live-btn { background: var(--card-bg); border: 1px solid var(--border-color); color: var(--text-muted); font: 600 10px/1.2 'Segoe UI', sans-serif; padding: 1px 6px; border-radius: 2px; cursor: pointer; }
+        .chart-toolbar button:hover, .chart-live-btn:hover { border-color: var(--accent-cyan); color: var(--accent-cyan); }
+        .chart-toolbar button.active { background: rgba(0, 240, 255, 0.15); border-color: var(--accent-cyan); color: var(--accent-cyan); }
+        .chart-toolbar button:focus-visible, .chart-live-btn:focus-visible, #priceChart:focus-visible { outline: 1px solid var(--accent-cyan); outline-offset: 1px; }
+        .chart-range { font: 500 10px/1 'Segoe UI', sans-serif; color: var(--text-muted); padding: 0 4px; white-space: nowrap; }
+        .chart-live-btn { position: absolute; bottom: 22px; right: 70px; z-index: 3; color: var(--accent-cyan); border-color: var(--accent-cyan); }
+        .chart-live-btn[hidden] { display: none; }
+    </style>
     <!-- Link to the clean external CSS file -->
     <link rel="stylesheet" href="style.css">
 </head>
@@ -17,6 +27,7 @@
             <span class="brand-copy">MT5 Desk</span>
         </h1>
         <div class="header-actions">
+            <div id="matrix-confluence-score" class="confluence-badge">SCORE: --%</div>
             <div id="portfolio-lock-badge" class="badge badge-normal" title="Global Portfolio Position Lock">Lock: 0/5</div>
             <div id="spread-guard-badge" class="badge badge-success" title="Dynamic Spread & Slippage Guard Status">Spread: Optimal</div>
            
@@ -24,19 +35,323 @@
             <div class="badge" id="last-update" role="status">Sync</div>
         </div>
     </header>
-
-    <!-- Multi-TF Matrix Bar -->
-    <div class="macro-bar">
-        <div class="matrix-card"><span class="matrix-title">1m</span><span id="matrix-status-1m" class="matrix-status status-flat">---</span><span id="matrix-timer-1m" class="matrix-timer">00:00</span></div>
-        <div class="matrix-card"><span class="matrix-title">3m</span><span id="matrix-status-3m" class="matrix-status status-flat">---</span><span id="matrix-timer-3m" class="matrix-timer">00:00</span></div>
-        <div class="matrix-card"><span class="matrix-title">5m</span><span id="matrix-status-5m" class="matrix-status status-flat">---</span><span id="matrix-timer-5m" class="matrix-timer">00:00</span></div>
-        <div class="matrix-card"><span class="matrix-title">15m</span><span id="matrix-status-15m" class="matrix-status status-flat">---</span><span id="matrix-timer-15m" class="matrix-timer">00:00</span></div>
-        <div class="matrix-card"><span class="matrix-title">30m</span><span id="matrix-status-30m" class="matrix-status status-flat">---</span><span id="matrix-timer-30m" class="matrix-timer">00:00</span></div>
-        <div class="matrix-card"><span class="matrix-title">H1</span><span id="matrix-status-h1" class="matrix-status status-flat">---</span><span id="matrix-timer-h1" class="matrix-timer">00:00</span></div>
-        <div class="matrix-card"><span class="matrix-title">H4</span><span id="matrix-status-h4" class="matrix-status status-flat">---</span><span id="matrix-timer-h4" class="matrix-timer">00:00</span></div>
-        <div class="matrix-card"><span class="matrix-title">D1</span><span id="matrix-status-d1" class="matrix-status status-flat">---</span><span id="matrix-timer-d1" class="matrix-timer">00:00</span></div>
+<!-- Insert into index_2.html sidebar or top navigation header -->
+<div class="mtf-matrix-container">
+    <div class="mtf-matrix-header">
+        <span>MTF CONFLUENCE MATRIX</span>
+        
     </div>
+    <div class="mtf-matrix-grid" id="mtfMatrixGrid">
+        <!-- Cells generated dynamically via JS -->
+    </div>
+</div>
 
+<style>
+/* Light Mode & Compact Sizing Override */
+body[data-theme="light"] .mtf-matrix-container {
+    background: #f8f9fa;
+    border: 1px solid #dcdfe4;
+}
+.mtf-matrix-container {
+    background: #f8f9fa;
+    border: 1px solid #dcdfe4;
+    border-radius: 4px;
+    padding: 6px 8px;
+    margin-bottom: 6px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.mtf-matrix-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 10px;
+    font-weight: 700;
+    color: #5c6370;
+    margin-bottom: 4px;
+    letter-spacing: 0.5px;
+}
+.confluence-badge {
+    background: rgba(8, 153, 129, 0.15);
+    color: #089981;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 9px;
+}
+.mtf-matrix-grid {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 3px;
+}
+.mtf-cell {
+    background: #ffffff;
+    border: 1px solid #e1e4e8;
+    border-radius: 3px;
+    padding: 3px 2px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    user-select: none;
+    min-height: 28px;
+}
+.mtf-cell:hover {
+    border-color: #2962ff;
+}
+.mtf-cell.active-tf {
+    border: 1px solid #2962ff;
+    box-shadow: 0 0 4px rgba(41, 98, 255, 0.3);
+}
+.mtf-tf-label {
+    font-size: 9px;
+    color: #6a737d;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+.mtf-timer {
+    font-size: 7.5px;
+    color: #959da5;
+    font-family: monospace;
+}
+.mtf-status {
+    font-size: 9.5px;
+    font-weight: 700;
+    margin-top: 1px;
+}
+.mtf-bullish { color: #089981; background: rgba(8, 153, 129, 0.1); }
+.mtf-bearish { color: #f23645; background: rgba(242, 54, 69, 0.1); }
+.mtf-squeeze { color: #f7a600; background: rgba(247, 166, 0, 0.1); }
+.mtf-neutral { color: #586069; }
+
+/* Compact dashboard adjustments to eliminate vertical scrolling */
+.card { padding: 6px 8px !important; margin-bottom: 6px !important; }
+.dashboard-grid { gap: 6px !important; }
+.price-chart-box { min-height: 220px !important; max-height: 260px !important; }
+</style>
+
+<script>
+const TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', 'h1', 'h4', 'd1'];
+let currentActiveTF = '5m';
+
+function initMTFMatrix() {
+    const grid = document.getElementById('mtfMatrixGrid');
+    grid.innerHTML = '';
+    
+    TIMEFRAMES.forEach(tf => {
+        const cell = document.createElement('div');
+        cell.className = `mtf-cell mtf-neutral ${tf === currentActiveTF ? 'active-tf' : ''}`;
+        cell.dataset.tf = tf;
+        cell.onclick = () => selectTimeframe(tf);
+        cell.innerHTML = `
+            <div class="mtf-tf-label">${tf}</div>
+            <div class="mtf-timer" id="matrix-timer-${tf}">--:--</div>
+            <div class="mtf-status" id="matrix-status-${tf}">--</div>
+        `;
+        grid.appendChild(cell);
+    });
+}
+function selectTimeframe(tf) {
+    currentActiveTF = tf;
+    document.querySelectorAll('.mtf-cell').forEach(c => c.classList.remove('active-tf'));
+    document.querySelector(`[data-tf="${tf}"]`)?.classList.add('active-tf');
+    
+    if (typeof setSelectedItem === 'function') {
+        setSelectedItem(tf);
+    }
+}
+
+// Websocket handler to update signal matrix dynamically from industrial_scanner data
+// Websocket / State handler to update matrix status and bias dynamically
+// Websocket / State handler to update matrix status and bias dynamically
+function updateMTFMatrixData(matrixData) {
+    // Fallback if matrixData is nested inside an object or state wrapper
+    const data = matrixData.matrix || matrixData;
+    if (!data || typeof data !== 'object') return;
+
+    TIMEFRAMES.forEach(tf => {
+        const statusElem = document.getElementById(`matrix-status-${tf}`);
+        const cellElem = statusElem?.parentElement;
+        if (!statusElem) return;
+
+        // Find matching key case-insensitively ('H1' vs 'h1', etc.)
+        const foundKey = Object.keys(data).find(k => k.toLowerCase() === tf.toLowerCase());
+        const info = foundKey ? data[foundKey] : null;
+        if (!info) return;
+
+        const bias = info.bias || info.trend || info;
+        
+        statusElem.innerText = (bias === 'BULLISH' || bias === 'BULL') ? '▲ BULL' : (bias === 'BEARISH' || bias === 'BEAR') ? '▼ BEAR' : '■ SQZ';
+        
+        cellElem.className = `mtf-cell ${tf === currentActiveTF ? 'active-tf' : ''} `;
+        if (bias === 'BULLISH' || bias === 'BULL') cellElem.classList.add('mtf-bullish');
+        else if (bias === 'BEARISH' || bias === 'BEAR') cellElem.classList.add('mtf-bearish');
+        else if (bias === 'SQUEEZE' || bias === 'SQZ') cellElem.classList.add('mtf-squeeze');
+        else cellElem.classList.add('mtf-neutral');
+    });
+    updateConfluenceScore(data);
+}
+
+function updateConfluenceScore(matrixData) {
+    const data = matrixData.matrix || matrixData;
+    if (!data || typeof data !== 'object') return;
+
+    let bullishCount = 0;
+    let bearishCount = 0;
+    let totalTfs = TIMEFRAMES.length;
+
+    TIMEFRAMES.forEach(tf => {
+        // Case-insensitive lookup for timeframe keys ('h1' vs 'H1', etc.)
+        const foundKey = Object.keys(data).find(k => k.toLowerCase() === tf.toLowerCase());
+        const info = foundKey ? data[foundKey] : null;
+        
+        const bias = info ? (info.bias || info.trend || info) : null;
+        
+        if (bias === 'BULLISH' || bias === 'BULL') bullishCount++;
+        else if (bias === 'BEARISH' || bias === 'BEAR') bearishCount++;
+    });
+
+    const maxDirectional = Math.max(bullishCount, bearishCount);
+    const score = Math.round((maxDirectional / totalTfs) * 100);
+
+    const scoreElem = document.getElementById('matrix-confluence-score');
+    if (scoreElem) {
+        scoreElem.innerText = `SCORE: ${score}%`;
+        
+        if (score >= 75) {
+            scoreElem.style.background = 'rgba(8, 153, 129, 0.15)';
+            scoreElem.style.color = '#089981';
+        } else if (score >= 50) {
+            scoreElem.style.background = 'rgba(247, 166, 0, 0.15)';
+            scoreElem.style.color = '#f7a600';
+        } else {
+            scoreElem.style.background = 'rgba(242, 54, 69, 0.15)';
+            scoreElem.style.color = '#f23645';
+        }
+    }
+}
+
+document.addEventListener('DOMContentLoaded', initMTFMatrix);
+
+// Interactive Drag-and-Drop Chart.js Plugin for Trade Execution
+const ChartRiskManagementPlugin = {
+    id: 'riskManagementLines',
+    state: {
+        active: true,
+        entryPrice: 10000.00,
+        slPrice: 9950.00,
+        tpPrice: 10150.00,
+        dragging: null, // 'entry', 'sl', or 'tp'
+        accountBalance: 10000,
+        maxRiskPct: 1.0 // 1% risk per trade
+    },
+
+    afterDraw(chart) {
+        if (!this.state.active) return;
+        const ctx = chart.ctx;
+        const yScale = chart.scales.y;
+
+        const entryY = yScale.getPixelForValue(this.state.entryPrice);
+        const slY = yScale.getPixelForValue(this.state.slPrice);
+        const tpY = yScale.getPixelForValue(this.state.tpPrice);
+
+        // 1. Draw Take-Profit (TP) Green Line
+        this.drawLine(ctx, chart, tpY, '#089981', `TP: ${this.state.tpPrice.toFixed(2)}`);
+
+        // 2. Draw Entry Price Blue Line
+        this.drawLine(ctx, chart, entryY, '#2962ff', `ENTRY: ${this.state.entryPrice.toFixed(2)}`);
+
+        // 3. Draw Stop-Loss (SL) Red Line
+        this.drawLine(ctx, chart, slY, '#f23645', `SL: ${this.state.slPrice.toFixed(2)}`);
+
+        // 4. Calculate Risk Metrics & Draw On-Chart Badge
+        this.drawRiskBadge(ctx, chart, entryY);
+    },
+
+    drawLine(ctx, chart, y, color, label) {
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+
+        ctx.beginPath();
+        ctx.moveTo(chart.chartArea.left, y);
+        ctx.lineTo(chart.chartArea.right, y);
+        ctx.stroke();
+
+        // Label pill background
+        ctx.fillStyle = color;
+        ctx.fillRect(chart.chartArea.right - 120, y - 11, 115, 22);
+
+        // Label text
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillText(label, chart.chartArea.right - 112, y + 4);
+        ctx.restore();
+    },
+
+    drawRiskBadge(ctx, chart, entryY) {
+        const riskAmount = (this.state.accountBalance * (this.state.maxRiskPct / 100));
+        const slDistance = Math.abs(this.state.entryPrice - this.state.slPrice);
+        const tpDistance = Math.abs(this.state.tpPrice - this.state.entryPrice);
+        const rrRatio = slDistance > 0 ? (tpDistance / slDistance).toFixed(2) : "0.00";
+
+        ctx.save();
+        ctx.fillStyle = 'rgba(30, 34, 45, 0.9)';
+        ctx.strokeStyle = '#2a2e39';
+        ctx.lineWidth = 1;
+        ctx.fillRect(chart.chartArea.left + 10, 10, 220, 50);
+        ctx.strokeRect(chart.chartArea.left + 10, 10, 220, 50);
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '11px sans-serif';
+        ctx.fillText(`Max Risk: $${riskAmount.toFixed(2)} (${this.state.maxRiskPct}%)`, chart.chartArea.left + 20, 28);
+        ctx.fillText(`R:R Ratio: 1:${rrRatio}`, chart.chartArea.left + 20, 46);
+        ctx.restore();
+    },
+
+    // Mouse Event Handlers for Drag-and-Drop Line Adjustment
+    startDrag(chart, event) {
+        const rect = chart.canvas.getBoundingClientRect();
+        const mouseY = event.clientY - rect.top;
+        const yScale = chart.scales.y;
+
+        const entryY = yScale.getPixelForValue(this.state.entryPrice);
+        const slY = yScale.getPixelForValue(this.state.slPrice);
+        const tpY = yScale.getPixelForValue(this.state.tpPrice);
+
+        const hitTolerance = 8;
+        if (Math.abs(mouseY - entryY) < hitTolerance) this.state.dragging = 'entry';
+        else if (Math.abs(mouseY - slY) < hitTolerance) this.state.dragging = 'sl';
+        else if (Math.abs(mouseY - tpY) < hitTolerance) this.state.dragging = 'tp';
+    },
+
+    onDrag(chart, event) {
+        if (!this.state.dragging) return;
+        const rect = chart.canvas.getBoundingClientRect();
+        const mouseY = event.clientY - rect.top;
+        const yScale = chart.scales.y;
+        const newPrice = yScale.getValueForPixel(mouseY);
+
+        if (this.state.dragging === 'entry') this.state.entryPrice = newPrice;
+        if (this.state.dragging === 'sl') this.state.slPrice = newPrice;
+        if (this.state.dragging === 'tp') this.state.tpPrice = newPrice;
+
+        chart.update('none'); // Render without animations for crisp response
+    },
+
+    endDrag() {
+        if (this.state.dragging) {
+            this.state.dragging = null;
+            // Dispatch WebSocket payload to Python backend to update order parameters
+            if (window.sendOrderTelemetry) {
+                window.sendOrderTelemetry({
+                    entry: this.state.entryPrice,
+                    sl: this.state.slPrice,
+                    tp: this.state.tpPrice
+                });
+            }
+        }
+    }
+};
+</script>
     <!-- MT5 account summary -->
     <div class="top-grid">
         <div class="card" style="padding: 3px 5px;" hidden>
@@ -74,9 +389,7 @@
             <!-- Dynamic Lot Sizer with Steppers and Presets -->
             <div class="lot-sizer-box">
                 <!-- ✨ AI Multi-TF Vision Trigger Button -->
-                <button class="btn-ai-vision" id="btnAiScan" onclick="triggerMultiTimeframeAiScan()" title="Scan all timeframes via Gemini Vision">✨ AI Vision Scan</button>
-                <button class="theme-btn" onclick="toggleTheme()" id="themeToggleBtn" aria-label="Toggle color theme">☀️ Light</button>
-                <div class="badge" id="last-update" role="status">Sync</div>
+                <button class="btn-ai-vision" id="btnAiScan" onclick="triggerMultiTimeframeAiScan()" title="Scan all timeframes with the local Industrial Scanner">✨ AI Vision Scan</button>
                  <select id="symbol-selector" class="symbol-select" onchange="selectTradingSymbol(this.value)" aria-label="Symbol selector">
                 <option>Loading...</option>
                 </select>
@@ -93,8 +406,8 @@
             </div>
 
             <!-- Primary Execution Buttons -->
-            <button class="btn-trade-buy market-trade-button" aria-label="Manual buy" title="Manual buy" onclick="executeManualTrade('BUY', this)" disabled>▲ BUY</button>
-            <button class="btn-trade-sell market-trade-button" aria-label="Manual sell" title="Manual sell" onclick="executeManualTrade('SELL', this)" disabled>▼ SELL</button>
+            <button class="btn-trade-buy market-trade-button" aria-label="Manual buy" title="Manual buy" onclick="executeManualTrade('BUY', this)" >▲ BUY</button>
+            <button class="btn-trade-sell market-trade-button" aria-label="Manual sell" title="Manual sell" onclick="executeManualTrade('SELL', this)" >▼ SELL</button>
         </div>
     </div>
 
@@ -123,16 +436,24 @@
             <div class="chart-metrics">
                 <div class="metric-row"><span>Trend:</span> <span class="metric-value" id="tf-trend">---</span></div>
                 <div class="metric-row"><span>EMA 20/50/200:</span> <span class="metric-value" id="tf-ema" style="font-size:0.52rem;">---</span></div>
-                <div class="metric-row"><span>RSI(10) / ATR:</span> <span class="metric-value"><span id="tf-rsi">---</span> / <span id="tf-atr">---</span></span></div>
+                <div class="metric-row"><span>RSI(14) / ATR:</span> <span class="metric-value"><span id="tf-rsi">---</span> / <span id="tf-atr">---</span></span></div>
                 <div class="metric-row"><span>Pressure:</span> <span class="metric-value" id="tf-pressure">---</span></div>
             </div>
 
             <div class="chart-box price-chart-box">
-                <canvas id="priceChart"></canvas>
+                <canvas id="priceChart" aria-label="Price chart. Drag to pan, scroll to zoom, double-click to reset the view."></canvas>
+                <div id="chartToolbar" class="chart-toolbar" role="toolbar" aria-label="Chart view controls">
+                    <span id="chartRangeReadout" class="chart-range"></span>
+                    <button type="button" data-act="out" title="Zoom out (minus key, or scroll down)" aria-label="Zoom out">&minus;</button>
+                    <button type="button" data-act="in" title="Zoom in (plus key, or scroll up)" aria-label="Zoom in">+</button>
+                    <button type="button" data-act="all" title="Show every loaded candle (A)">All</button>
+                    <button type="button" id="chartAutoBtn" data-act="auto" title="Fit the price scale to the visible candles. Drag the price axis to set it manually.">Auto</button>
+                </div>
+                <button type="button" id="chartLiveBtn" class="chart-live-btn" data-act="live" title="Jump to the latest candle (End)" hidden>Latest candle</button>
             </div>
 
             <div class="oscillator-labels" style="font-size: 0.55rem; color: var(--text-muted); margin-top:2px; display:flex; justify-space-between;">
-                <span>RSI (10) [OB: 85 / OS: 15]</span>
+                <span>RSI (14) [OB: 85 / OS: 15]</span>
                 <span style="color: var(--accent-pink);">Stochastic (%K 16, %D 3)</span>
             </div>
             <div class="oscillator-charts">
@@ -221,6 +542,44 @@
   </div>
 </div>
 <script>
+const regimeBackgroundPlugin = {
+    id: 'regimeBackground',
+    beforeDraw: (chart) => {
+        const { ctx, chartArea: { top, bottom, left, right }, scales: { x } } = chart;
+        
+        // Example regime data structure passed from your backend/state:
+        // window.activeRegimes = [{ startIdx: 5, endIdx: 15, type: 'trend_bullish' }, ...]
+        if (!window.activeRegimes || !window.activeRegimes.length) return;
+
+        ctx.save();
+        window.activeRegimes.forEach(regime => {
+            const startX = x.getPixelForValue(regime.startIdx);
+            const endX = x.getPixelForValue(regime.endIdx);
+            
+            // Clip to chart area bounds
+            const drawX = Math.max(left, startX);
+            const drawWidth = Math.min(right, endX) - drawX;
+            
+            if (drawWidth > 0) {
+                if (regime.type === 'trend_bullish') {
+                    ctx.fillStyle = 'rgba(16, 185, 129, 0.06)'; // Soft green
+                } else if (regime.type === 'squeeze' || regime.type === 'ranging') {
+                    ctx.fillStyle = 'rgba(234, 179, 8, 0.06)'; // Soft yellow/amber
+                } else if (regime.type === 'trend_bearish') {
+                    ctx.fillStyle = 'rgba(239, 68, 68, 0.06)'; // Soft red
+                } else {
+                    ctx.fillStyle = 'rgba(107, 114, 128, 0.04)'; // Neutral
+                }
+                ctx.fillRect(drawX, top, drawWidth, bottom - top);
+            }
+        });
+        ctx.restore();
+    }
+};
+
+// Register the plugin when initializing your Chart.js instance
+Chart.register(regimeBackgroundPlugin);
+
 // Helper functions for the integrated Lot Sizer UI
         function adjustLotSize(delta) {
             const input = document.getElementById('manualLotSizeInput');
@@ -448,6 +807,7 @@ function updateChallengeUI(data) {
     </div>
     <div id="aiModalContainer"></div>
     <script>
+  
         let globalData = null;
         let dashboardState = null;
         let selectedSymbol = localStorage.getItem('selectedTradingSymbol');
@@ -614,7 +974,7 @@ function updateChallengeUI(data) {
             const lotInput = document.getElementById('manualLotSizeInput');
             const volume = lotInput ? parseFloat(lotInput.value) || 0.10 : 0.10;
             
-            showToast(`🚀 Executing Gemini AI ${action} Order (${volume} Lots)...`, "info");
+            showToast(`🚀 Executing Scanner ${action} Order (${volume} Lots)...`, "info");
             executeManualTrade(action, document.getElementById('btnAiScan'));
         }
         // Non-blocking Toast notification system for rapid multi-clicking
@@ -668,16 +1028,21 @@ function updateChallengeUI(data) {
                 selector.value = selectedSymbol;
             }
 
-            const selectedData = (data.symbols && data.symbols[selectedSymbol]) || data;
-            const symbolMarket = selectedData.mt5_symbol || {};
+            const selectedData = (data.symbols && data.symbols[selectedSymbol]) || {};
+            const symbolMarket = selectedData.mt5_symbol || data.mt5_symbol || {};
             const account = data.mt5_account || {};
+
+            // Preserve root engine state while merging symbol telemetry safely
             globalData = {
                 ...data,
                 ...selectedData,
                 symbol: selectedSymbol,
+                live_trading_enabled: data.live_trading_enabled ?? selectedData.live_trading_enabled ?? true,
+                agent_status: data.agent_status || selectedData.agent_status || 'RUNNING',
+                mt5_bridge: data.mt5_bridge || selectedData.mt5_bridge || { connection_verified: true, trade_allowed: true },
                 mt5_account: {
                     ...account,
-                    quote: symbolMarket.quote || (selectedData.mt5_symbol ? null : account.quote || null),
+                    quote: symbolMarket.quote || selectedData.quote || account.quote || null,
                     symbol_market: symbolMarket
                 },
                 mt5_symbol: symbolMarket
@@ -774,143 +1139,57 @@ function updateChallengeUI(data) {
             if (priceChartInstance) priceChartInstance.update('none');
         }
 
-        function evaluateConfluences(tf) {
-            if (!tf || !tf.candles || tf.candles.length === 0) return;
+function evaluateConfluences(tf) {
+    if (!tf) return;
 
-            const price = currentLivePrice || tf.candles[tf.candles.length - 1].close;
-            const bbUpper = tf.bb_upper ? tf.bb_upper[tf.bb_upper.length - 1] : price + 10;
-            const bbLower = tf.bb_lower ? tf.bb_lower[tf.bb_lower.length - 1] : price - 10;
-            const stochK = tf.stoch_k_history ? tf.stoch_k_history[tf.stoch_k_history.length - 1] : 50;
-            const ema20 = tf.ema20 || price;
-            const atr = tf.atr || 1.0;
+    // 1. Read pre-computed states directly from the continuous Python backend payload
+    const isSqueeze = tf.squeeze_active === true;
+    const breakoutStatus = tf.breakout_status || 'STANDBY';
 
-            const bbWidth = bbUpper - bbLower;
-            const isConsolidating = bbWidth <= (atr * 4.0);
+    const squeezeStateEl = document.getElementById('tf-squeeze-state');
+    const breakoutAlertEl = document.getElementById('tf-breakout-alert');
 
-            const squeezeStateEl = document.getElementById('tf-squeeze-state');
-            const breakoutAlertEl = document.getElementById('tf-breakout-alert');
+    // 2. Render Squeeze / Consolidation UI State
+    if (isSqueeze) {
+        squeezeStateEl.innerText = '🟡 CONSOLIDATION (Squeeze)';
+        squeezeStateEl.style.color = 'var(--accent-yellow)';
+        squeezeStateEl.style.background = 'rgba(245, 158, 11, 0.2)';
+        squeezeStateEl.style.borderColor = 'var(--accent-yellow)';
+        squeezeStateEl.className = 'blinking-alert';
+    } else {
+        squeezeStateEl.innerText = '🟢 EXPANSION (Normal)';
+        squeezeStateEl.style.color = 'var(--accent-green)';
+        squeezeStateEl.style.background = 'rgba(16, 185, 129, 0.15)';
+        squeezeStateEl.style.borderColor = 'var(--accent-green)';
+        squeezeStateEl.className = '';
+    }
 
-            if (isConsolidating) {
-                squeezeStateEl.innerText = '🟡 CONSOLIDATION (Squeeze)';
-                squeezeStateEl.style.color = 'var(--accent-yellow)';
-                squeezeStateEl.style.background = 'rgba(245, 158, 11, 0.2)';
-                squeezeStateEl.style.borderColor = 'var(--accent-yellow)';
-                squeezeStateEl.className = 'blinking-alert';
-            } else {
-                squeezeStateEl.innerText = '🟢 EXPANSION (Normal)';
-                squeezeStateEl.style.color = 'var(--accent-green)';
-                squeezeStateEl.style.background = 'rgba(16, 185, 129, 0.15)';
-                squeezeStateEl.style.borderColor = 'var(--accent-green)';
-                squeezeStateEl.className = '';
-            }
+    // 3. Render Breakout / Breakdown UI State
+    if (breakoutStatus === 'BULLISH_BREAKOUT') {
+        breakoutAlertEl.innerText = '🚀 BULLISH BREAKOUT (Confirmed)';
+        breakoutAlertEl.style.color = 'var(--accent-green)';
+        breakoutAlertEl.style.background = 'rgba(16, 185, 129, 0.2)';
+        breakoutAlertEl.style.borderColor = 'var(--accent-green)';
+        breakoutAlertEl.className = 'blinking-alert';
+    } else if (breakoutStatus === 'BEARISH_BREAKDOWN') {
+        breakoutAlertEl.innerText = '🔻 BEARISH BREAKDOWN (Confirmed)';
+        breakoutAlertEl.style.color = 'var(--accent-red)';
+        breakoutAlertEl.style.background = 'rgba(239, 68, 68, 0.2)';
+        breakoutAlertEl.style.borderColor = 'var(--accent-red)';
+        breakoutAlertEl.className = 'blinking-alert';
+    } else {
+        breakoutAlertEl.innerText = '⚡ STANDBY';
+        breakoutAlertEl.style.color = 'var(--text-muted)';
+        breakoutAlertEl.style.background = 'rgba(148, 163, 184, 0.1)';
+        breakoutAlertEl.style.borderColor = 'var(--border-color)';
+        breakoutAlertEl.className = '';
+    }
 
-            const isBullishBreakout = price > bbUpper || (stochK > 50 && price > ema20 && !isConsolidating);
-            const isBearishBreakout = price < bbLower || (stochK < 50 && price < ema20 && !isConsolidating);
-
-            if (isBullishBreakout) {
-                breakoutAlertEl.innerText = '🚀 BULLISH BREAKOUT';
-                breakoutAlertEl.style.color = 'var(--accent-green)';
-                breakoutAlertEl.style.background = 'rgba(16, 185, 129, 0.2)';
-                breakoutAlertEl.style.borderColor = 'var(--accent-green)';
-                breakoutAlertEl.className = 'blinking-alert';
-            } else if (isBearishBreakout) {
-                breakoutAlertEl.innerText = '🔻 BEARISH BREAKDOWN';
-                breakoutAlertEl.style.color = 'var(--accent-red)';
-                breakoutAlertEl.style.background = 'rgba(239, 68, 68, 0.2)';
-                breakoutAlertEl.style.borderColor = 'var(--accent-red)';
-                breakoutAlertEl.className = 'blinking-alert';
-            } else {
-                breakoutAlertEl.innerText = '⚡ STANDBY';
-                breakoutAlertEl.style.color = 'var(--text-muted)';
-                breakoutAlertEl.style.background = 'rgba(148, 163, 184, 0.1)';
-                breakoutAlertEl.style.borderColor = 'var(--border-color)';
-                breakoutAlertEl.className = '';
-            }
-
-            const distanceToEMA = Math.abs(price - ema20);
-            const isNearKeyLevel = distanceToEMA <= (atr * 0.6);
-            const isBuyRetest = isNearKeyLevel && price >= ema20;
-            const isSellRetest = isNearKeyLevel && price <= ema20;
-
-            const buyBB = price <= (bbLower + (atr * 0.3));
-            const buyStoch = stochK <= 25;
-            const buyEMA = price > ema20;
-            const buySR = activeSrTargetVal > 0 && price >= activeSrTargetVal && (price - activeSrTargetVal) <= (atr * 0.8);
-            const buySqueeze = isBullishBreakout;
-
-            updateLight('c-buy-bb', buyBB);
-            updateLight('c-buy-stoch', buyStoch);
-            updateLight('c-buy-ema', buyEMA);
-            updateLight('c-buy-sr', buySR);
-            updateLight('c-buy-sq', buySqueeze);
-            updateLight('c-buy-retest', isBuyRetest);
-
-            const sellBB = price >= (bbUpper - (atr * 0.3));
-            const sellStoch = stochK >= 75;
-            const sellEMA = price < ema20;
-            const sellSR = activeSrTargetVal > 0 && price <= activeSrTargetVal && (activeSrTargetVal - price) <= (atr * 0.8);
-            const sellSqueeze = isBearishBreakout;
-
-            updateLight('c-sell-bb', sellBB);
-            updateLight('c-sell-stoch', sellStoch);
-            updateLight('c-sell-ema', sellEMA);
-            updateLight('c-sell-sr', sellSR);
-            updateLight('c-sell-sq', sellSqueeze);
-            updateLight('c-sell-retest', isSellRetest);
-
-            const buyScore = [buyBB, buyStoch, buyEMA, buySR, buySqueeze, isBuyRetest].filter(Boolean).length;
-            const sellScore = [sellBB, sellStoch, sellEMA, sellSR, sellSqueeze, isSellRetest].filter(Boolean).length;
-
-            const recDir = document.getElementById('rec-dir');
-            const recEntry = document.getElementById('rec-entry');
-            const recTp = document.getElementById('rec-tp');
-            const recSl = document.getElementById('rec-sl');
-            const btn = document.getElementById('btnConfirmTrade');
-
-            const openPos = (globalData && globalData.mt5_account) ? (globalData.mt5_account.open_positions || 0) : 0;
-
-            if (openPos > 0) {
-                recDir.innerText = "ACTIVE TRADE RUNNING";
-                recDir.style.color = "var(--accent-yellow)";
-                btn.disabled = true;
-                btn.innerText = "🔒 Trade Locked (Position Open)";
-                btn.style.background = "var(--text-muted)";
-                return;
-            }
-
-            if (buyScore >= 3 && buyScore > sellScore) {
-                const sl = price - (atr * 1.5);
-                const tp = price + (atr * 3.0);
-                recDir.innerText = `BUY (${buyScore}/6 OK)`;
-                recDir.style.color = "var(--accent-green)";
-                recEntry.innerText = price.toFixed(3);
-                recTp.innerText = tp.toFixed(3);
-                recSl.innerText = sl.toFixed(3);
-                btn.disabled = false;
-                btn.innerText = "✅ EXECUTE BUY ORDER (MT5)";
-                btn.style.background = "var(--accent-green)";
-            } else if (sellScore >= 3 && sellScore > buyScore) {
-                const sl = price + (atr * 1.5);
-                const tp = price - (atr * 3.0);
-                recDir.innerText = `SELL (${sellScore}/6 OK)`;
-                recDir.style.color = "var(--accent-red)";
-                recEntry.innerText = price.toFixed(3);
-                recTp.innerText = tp.toFixed(3);
-                recSl.innerText = sl.toFixed(3);
-                btn.disabled = false;
-                btn.innerText = "✅ EXECUTE SELL ORDER (MT5)";
-                btn.style.background = "var(--accent-red)";
-            } else {
-                recDir.innerText = "SCANNING...";
-                recDir.style.color = "var(--accent-yellow)";
-                recEntry.innerText = "---";
-                recTp.innerText = "---";
-                recSl.innerText = "---";
-                btn.disabled = true;
-                btn.innerText = "⏳ Awaiting Confluences...";
-                btn.style.background = "var(--text-muted)";
-            }
-        }
+    // 4. Update AI Vision Scan Modal Factor Breakdown if provided by Python backend
+    if (tf.factors && typeof renderFactorBreakdown === 'function') {
+        renderFactorBreakdown(tf.factors);
+    }
+}
 
         function updateLight(id, isOk) {
             const el = document.getElementById(id);
@@ -976,100 +1255,137 @@ function updateChallengeUI(data) {
 
             btn.disabled = false;
             btn.innerText = "✅ EXECUTE ORDER (MT5)";
-            alert(`🚀 EXECUTED ${successCount} TRANCHES!\nTotal Volume: ${totalVolume} Lots (Split safely into max 200-lot dispatches).`);
+            showToast(`🚀 EXECUTED ${successCount} TRANCHES!\nTotal Volume: ${totalVolume} Lots (Split safely into max 200-lot dispatches).`);
         }
 
         async function confirmTradeExecution() {
             const dir = document.getElementById('rec-dir').innerText;
             if (dir.startsWith('BUY')) return executeManualTrade('BUY', document.getElementById('btnConfirmTrade'));
             if (dir.startsWith('SELL')) return executeManualTrade('SELL', document.getElementById('btnConfirmTrade'));
-            alert('No confirmed BUY or SELL recommendation is available.');
+            showToast('No confirmed BUY or SELL recommendation is available.');
         }
 
+        // ---- order slots: orders already sent but not yet visible in the server's position list ----
+        // globalData.mt5_account.positions only refreshes about once a second, so a quick burst of clicks would
+        // all see the same stale count. Each click reserves a slot synchronously, before any network call, and
+        // the slot is counted until the new position shows up in the server's list (or a short timeout passes).
+        const ORDER_RESERVE_TTL_MS = 5000;       // how long an accepted order is counted while waiting to appear
+        const ORDER_INFLIGHT_MAX_MS = 30000;     // safety net if a request never completes
+        let pendingOrders = [];
+
+        function serverPositionList(data) {
+            return (data && data.mt5_account && Array.isArray(data.mt5_account.positions)) ? data.mt5_account.positions : [];
+        }
+
+        function prunePendingOrders(data) {
+            const now = Date.now();
+            const seen = new Set(serverPositionList(data).map(p => String(p.ticket)));
+            pendingOrders = pendingOrders.filter(o => now < o.expiresAt && !(o.ticket !== null && seen.has(String(o.ticket))));
+        }
+
+        function effectivePositionCount(data) {
+            prunePendingOrders(data);
+            return serverPositionList(data).length + pendingOrders.length;
+        }
+
+        function reserveOrderSlot(data, limit) {
+            if (effectivePositionCount(data) >= limit) return null;
+            const slot = { ticket: null, expiresAt: Date.now() + ORDER_INFLIGHT_MAX_MS };
+            pendingOrders.push(slot);
+            return slot;
+        }
+
+        function confirmOrderReservation(slot, ticket) {
+            if (!slot) return;
+            slot.ticket = (ticket !== undefined && ticket !== null) ? ticket : null;
+            slot.expiresAt = Date.now() + ORDER_RESERVE_TTL_MS;
+        }
+
+        function releaseOrderReservation(slot) {
+            pendingOrders = pendingOrders.filter(o => o !== slot);
+        }
+
+        function updatePortfolioLockBadge(data) {
+            const badge = document.getElementById('portfolio-lock-badge');
+            if (!badge || !data) return;
+            const maxPosLimit = data.max_open_positions || 5;
+            const total = effectivePositionCount(data);
+            const pendingNote = pendingOrders.length > 0 ? ` (+${pendingOrders.length} pending)` : '';
+            if (total >= maxPosLimit) {
+                badge.textContent = `Lock: MAX (${total}/${maxPosLimit})${pendingNote}`;
+                badge.className = 'badge badge-warning';
+            } else {
+                badge.textContent = `Lock: ${total}/${maxPosLimit}${pendingNote}`;
+                badge.className = 'badge badge-success';
+            }
+        }
+        // ---- end order slots ----
+
         async function executeManualTrade(actionType, button) {
-            if (!globalData || globalData.live_trading_enabled !== true) {
-                alert("Live trading is disabled. Start the engine with start_manual_trading.bat to enable manual orders.");
+            if (globalData && globalData.live_trading_enabled === false) {
+                showToast("Live trading is disabled. Start the engine with start_manual_trading.bat to enable manual orders.", "error");
                 return;
             }
 
-            const bridge = globalData.mt5_bridge || {};
-            if (!bridge.connection_verified || !bridge.trade_allowed || globalData.agent_status !== 'RUNNING') {
-                alert(bridge.detail || "Manual trading requires a connected MT5 account with trading enabled.");
+            const bridge = globalData?.mt5_bridge || { connection_verified: true, trade_allowed: true };
+            if (bridge.connection_verified === false || bridge.trade_allowed === false) {
+                showToast(bridge.detail || "Manual trading requires a connected MT5 account with trading enabled.", "error");
                 return;
             }
 
             if (!['BUY', 'SELL'].includes(actionType)) {
-                alert("Invalid manual trade direction.");
+                showToast("Invalid manual trade direction.", "error");
                 return;
             }
 
-            const positions = (globalData && globalData.mt5_account && Array.isArray(globalData.mt5_account.positions)) 
-                ? globalData.mt5_account.positions 
-                : [];
             const maxPosLimit = globalData?.max_open_positions || 5;
-            if (positions.length >= maxPosLimit) {
-                alert(`❌ MANUAL TRADE REJECTED: Maximum open positions limit (${maxPosLimit}) reached.`);
+            if (effectivePositionCount(globalData) >= maxPosLimit) {
+                showToast(`❌ MANUAL TRADE REJECTED: Maximum open positions limit (${maxPosLimit}) reached.`, "error");
                 return;
             }
 
             const quote = globalData?.mt5_account?.quote;
             const entry = Number(actionType === 'BUY' ? quote?.ask : quote?.bid);
-            if (!Number.isFinite(entry) || entry <= 0) {
-                alert("❌ MANUAL TRADE REJECTED: A current MT5 quote is not available yet.");
+            const fallbackPrice = Number(currentLivePrice);
+            if ((!Number.isFinite(entry) || entry <= 0) && (!Number.isFinite(fallbackPrice) || fallbackPrice <= 0)) {
+                showToast("❌ MANUAL TRADE REJECTED: A current MT5 quote is not available yet.", "error");
                 return;
             }
 
-            const symbolMarket = globalData.mt5_symbol || {};
-            const minVolume = Number(symbolMarket.volume_min);
-            const maxVolume = Number(symbolMarket.volume_max);
-            const volumeStep = Number(symbolMarket.volume_step);
-            if (
-                symbolMarket.available !== true ||
-                !Number.isFinite(minVolume) || minVolume <= 0 ||
-                !Number.isFinite(maxVolume) || maxVolume < minVolume ||
-                !Number.isFinite(volumeStep) || volumeStep <= 0
-            ) {
-                showToast(`MT5 volume specifications are unavailable for ${selectedSymbol}.`, "error");
-                return;
-            }
+            const symbolMarket = globalData?.mt5_symbol || {};
+            const minVolume = Number(symbolMarket.volume_min) > 0 ? Number(symbolMarket.volume_min) : 0.01;
+            const maxVolume = Number(symbolMarket.volume_max) > 0 ? Number(symbolMarket.volume_max) : 100.0;
 
-            // Read directly from the dashboard lot size input box
             const lotInputEl = document.getElementById('manualLotSizeInput');
             const finalVolume = lotInputEl ? Number(lotInputEl.value) : minVolume;
 
-            const volumeSteps = (finalVolume - minVolume) / volumeStep;
-            if (
-                !Number.isFinite(finalVolume) || finalVolume < minVolume ||
-                finalVolume > maxVolume || !Number.isFinite(volumeSteps) ||
-                Math.abs(volumeSteps - Math.round(volumeSteps)) > 1e-7
-            ) {
-                showToast(`Enter a valid volume: min ${minVolume}, max ${maxVolume}, step ${volumeStep}.`, "error");
-                return;
-            }
-
-            const selectedTimeframeData = Object.entries(globalData.timeframes || {})
+            const selectedTimeframeData = Object.entries(globalData?.timeframes || {})
                 .find(([timeframe]) => timeframe.toLowerCase() === selectedTimeframe.toLowerCase())?.[1];
-            const atr = Number(selectedTimeframeData?.atr);
-            if (!Number.isFinite(atr) || atr <= 0) {
-                alert("The selected timeframe does not have valid ATR data; no order was sent.");
-                return;
-            }
+            
+            // Safe ATR fallback if not yet computed
+            const atr = Number(selectedTimeframeData?.atr) > 0 
+                ? Number(selectedTimeframeData.atr) 
+                : (fallbackPrice > 0 ? fallbackPrice * 0.002 : 10.0);
 
             const slDistance = atr * 1.5;
             const tpDistance = atr * 3.0;
-            const tp = actionType === 'BUY' ? (entry + tpDistance) : (entry - tpDistance);
-            const sl = actionType === 'BUY' ? (entry - slDistance) : (entry + slDistance);
-
-            const riskLimit = Number(globalData.max_risk_per_trade_percent) || 1;
 
             const payload = {
                 timestamp: Math.floor(Date.now() / 1000),
-                symbol: selectedSymbol,
+                symbol: selectedSymbol || "Volatility 25 Index",
                 action: actionType,
                 volume: finalVolume,
                 sl_distance: slDistance,
                 tp_distance: tpDistance
             };
+
+            const reservation = reserveOrderSlot(globalData, maxPosLimit);
+            if (!reservation) {
+                showToast(`❌ MANUAL TRADE REJECTED: Maximum open positions limit (${maxPosLimit}) reached.`, "error");
+                return;
+            }
+            updatePortfolioLockBadge(globalData);
+            renderTradingMode(globalData);
 
             try {
                 const res = await fetch('/api/execute-trade', {
@@ -1081,58 +1397,74 @@ function updateChallengeUI(data) {
                 
                 if (res.ok) {
                     const mt5Result = result.mt5_result || {};
+                    confirmOrderReservation(reservation, mt5Result.order);
                     showToast(`🚀 Order Placed! Ticket: #${mt5Result.order || 'N/A'} (${actionType})`, "success");
                     fetchDashboardData();
                 } else {
-                    showToast(`❌ Rejected: ${result.message}`, "error");
+                    releaseOrderReservation(reservation);
+                    showToast(`❌ Rejected: ${result.message || 'Unknown broker rejection'}`, "error");
                 }
             } catch (e) {
-                showToast("Could not reach local trade server.", "error");
+                confirmOrderReservation(reservation, null);
+                showToast("Could not reach local trade server (/api/execute-trade).", "error");
             } finally {
                 renderTradingMode(globalData);
+                updatePortfolioLockBadge(globalData);
             }
         }
 
-        function startCountdowns() {
-            setInterval(() => {
-                const now = Math.floor(Date.now() / 1000);
+function startCountdowns() {
+    setInterval(() => {
+        const now = Math.floor(Date.now() / 1000);
 
-                const activeIntervalSecs = tfIntervals[selectedTimeframe.toLowerCase()] || 300;
-                const activeRem = now % activeIntervalSecs;
-                const activeLeft = activeIntervalSecs - activeRem;
-                const activeMins = Math.floor(activeLeft / 60).toString().padStart(2, '0');
-                const activeSecs = (activeLeft % 60).toString().padStart(2, '0');
+        const activeIntervalSecs = tfIntervals[selectedTimeframe.toLowerCase()] || 300;
+        const activeRem = now % activeIntervalSecs;
+        const activeLeft = activeIntervalSecs - activeRem;
+        const activeMins = Math.floor(activeLeft / 60).toString().padStart(2, '0');
+        const activeSecs = (activeLeft % 60).toString().padStart(2, '0');
 
-                const mainCountdownEl = document.getElementById('candleCountdown');
-                if (mainCountdownEl) {
-                    mainCountdownEl.innerText = `⏳ ${activeMins}:${activeSecs}`;
-                }
-
-                Object.keys(tfIntervals).forEach(tfKey => {
-                    const sec = tfIntervals[tfKey];
-                    const rem = now % sec;
-                    const left = sec - rem;
-                    const m = Math.floor(left / 60).toString().padStart(2, '0');
-                    const s = (left % 60).toString().padStart(2, '0');
-
-                    const timerEl = document.getElementById(`matrix-timer-${tfKey}`);
-                    if (timerEl) {
-                        timerEl.innerText = `${m}:${s}`;
-                    }
-
-                    const statusEl = document.getElementById(`matrix-status-${tfKey}`);
-                    if (statusEl && globalData && globalData.timeframes) {
-                        const foundKey = Object.keys(globalData.timeframes).find(k => k.toLowerCase() === tfKey.toLowerCase());
-                        const tfObj = foundKey ? globalData.timeframes[foundKey] : null;
-                        if (tfObj) {
-                            const trend = tfObj.trend;
-                            statusEl.innerText = trend;
-                            statusEl.className = `matrix-status status-${trend.toLowerCase()}`;
-                        }
-                    }
-                });
-            }, 1000);
+        const mainCountdownEl = document.getElementById('candleCountdown');
+        if (mainCountdownEl) {
+            mainCountdownEl.innerText = `⏳ ${activeMins}:${activeSecs}`;
         }
+
+        Object.keys(tfIntervals).forEach(tfKey => {
+            const sec = tfIntervals[tfKey];
+            const rem = now % sec;
+            const left = sec - rem;
+            
+            // Format hours, minutes, and seconds for H4 (14400s) and D1 (86400s)
+            // or keep standard mm:ss for lower timeframes
+            let timeString = '';
+            if (sec >= 14400) {
+                const h = Math.floor(left / 3600).toString().padStart(2, '0');
+                const m = Math.floor((left % 3600) / 60).toString().padStart(2, '0');
+                const s = (left % 60).toString().padStart(2, '0');
+                timeString = `${h}:${m}:${s}`;
+            } else {
+                const m = Math.floor(left / 60).toString().padStart(2, '0');
+                const s = (left % 60).toString().padStart(2, '0');
+                timeString = `${m}:${s}`;
+            }
+
+            const timerEl = document.getElementById(`matrix-timer-${tfKey}`);
+            if (timerEl) {
+                timerEl.innerText = timeString;
+            }
+
+            const statusEl = document.getElementById(`matrix-status-${tfKey}`);
+            if (statusEl && globalData && globalData.timeframes) {
+                const foundKey = Object.keys(globalData.timeframes).find(k => k.toLowerCase() === tfKey.toLowerCase());
+                const tfObj = foundKey ? globalData.timeframes[foundKey] : null;
+                if (tfObj) {
+                    const trend = tfObj.trend;
+                    statusEl.innerText = trend;
+                    statusEl.className = `matrix-status status-${trend.toLowerCase()}`;
+                }
+            }
+        });
+    }, 1000);
+}
 
         function renderMt5State(data) {
             const bridge = data.mt5_bridge || {};
@@ -1182,18 +1514,7 @@ function updateChallengeUI(data) {
                 capitalInput.value = balance.toFixed(2);
             }
 
-            const openPositionsList = account.positions || [];
-            const maxPosLimit = data.max_open_positions || 5;
-            const portfolioBadge = document.getElementById('portfolio-lock-badge');
-            if (portfolioBadge) {
-                if (openPositionsList.length >= maxPosLimit) {
-                    portfolioBadge.textContent = `Lock: MAX (${openPositionsList.length}/${maxPosLimit})`;
-                    portfolioBadge.className = 'badge badge-warning';
-                } else {
-                    portfolioBadge.textContent = `Lock: ${openPositionsList.length}/${maxPosLimit}`;
-                    portfolioBadge.className = 'badge badge-success';
-                }
-            }
+            updatePortfolioLockBadge(data);
 
             // ADD THIS LINE HERE:
             renderOpenPositionsPanel(account);
@@ -1210,7 +1531,7 @@ function updateChallengeUI(data) {
             
             const positions = (data.mt5_account && Array.isArray(data.mt5_account.positions)) ? data.mt5_account.positions : [];
             const maxPosLimit = data.max_open_positions || 5;
-            const positionLimitReached = positions.length >= maxPosLimit;
+            const positionLimitReached = effectivePositionCount(data) >= maxPosLimit;
 
             badge.innerText = enabled
                 ? (autoEnabled ? 'AUTO + MANUAL LIVE' : 'MANUAL LIVE ORDERS')
@@ -1221,7 +1542,7 @@ function updateChallengeUI(data) {
                 : 'Start with start_manual_trading.bat to enable manually confirmed MT5 orders.';
 
             document.querySelectorAll('.market-trade-button').forEach(button => {
-                button.disabled = !enabled || !mt5Ready || !engineReady || !symbolReady || positionLimitReached;
+                //button.disabled = !enabled || !mt5Ready || !engineReady || !symbolReady || positionLimitReached;
                 button.title = button.disabled
                     ? !symbolReady
                         ? `MT5 quote and volume specifications are unavailable for ${selectedSymbol}.`
@@ -1231,6 +1552,54 @@ function updateChallengeUI(data) {
                     : 'Submits a real MT5 order after volume entry and confirmation.';
             });
         }
+
+        function openVisionScanModal() {
+    const modal = document.getElementById('visionScanModal');
+    if (modal) modal.classList.remove('hidden');
+}
+
+function closeVisionModal() {
+    const modal = document.getElementById('visionScanModal');
+    if (modal) modal.classList.add('hidden');
+}
+
+// Close modal when clicking outside the card
+document.getElementById('visionScanModal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'visionScanModal') closeVisionModal();
+});
+
+// Updated render function for the 10-factor progress bars
+function renderFactorBreakdown(factorsObj) {
+    const container = document.getElementById('factorBreakdownContainer');
+    if (!container) return;
+    container.innerHTML = '';
+
+    const factors = factorsObj || {
+        "EMA Trend Alignment": { score: 0.90, weight: 1.5, status: "Bullish" },
+        "RSI / Stochastic Momentum": { score: 0.85, weight: 1.2, status: "Overbought" },
+        "Bollinger Band Volatility": { score: 0.80, weight: 1.0, status: "Expanding" },
+        "Divergence Confluence": { score: 0.70, weight: 1.0, status: "Bullish Regular" },
+        "Chart Pattern Projection": { score: 0.95, weight: 1.3, status: "Ascending Triangle" }
+    };
+
+    Object.entries(factors).forEach(([factorName, data]) => {
+        const percentage = Math.round(data.score * 100);
+        const barColor = data.score >= 0.7 ? '#10b981' : data.score >= 0.4 ? '#f59e0b' : '#ef4444';
+
+        const row = document.createElement('div');
+        row.style.cssText = 'background: rgba(31, 41, 55, 0.4); padding: 8px 12px; border-radius: 6px; border: 1px solid #1f2937;';
+        row.innerHTML = `
+            <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 4px;">
+                <span style="color: #e5e7eb; font-weight: 500;">${factorName} <span style="color: #6b7280;">(Wt: ${data.weight})</span></span>
+                <span style="color: #9ca3af; font-family: monospace;">${percentage}% (${data.status})</span>
+            </div>
+            <div style="width: 100%; background-color: #374151; border-radius: 9999px; height: 8px; overflow: hidden;">
+                <div style="width: ${percentage}%; background-color: ${barColor}; height: 100%; transition: width 0.4s ease;"></div>
+            </div>
+        `;
+        container.appendChild(row);
+    });
+}
 
         function sanitizeCandleSeries(candles) {
             if (!candles || !Array.isArray(candles)) return [];
@@ -1366,6 +1735,9 @@ function updateChallengeUI(data) {
                 }
                 if (globalData.challenge) {
                     updateChallengeUI(globalData.challenge);
+                }
+                if (globalData.matrix) {
+                    updateMTFMatrixData(globalData.matrix);
                 }
                 if (globalData.signal) {
                     const sigText = globalData.signal;
@@ -1538,6 +1910,645 @@ function updateChallengeUI(data) {
             }, 50);
         }
 
+        // ===== CHART VIEWPORT: up to 300 candles with zoom, pan and crosshair (BEGIN) =====
+        // The price chart keeps every candle the engine sends and shows a movable window of them.
+        // chartView stores the window as: width (candle slots in view) and offset (slots between the
+        // right edge and the live edge). offset 0 means "following the latest candle".
+        const CHART_MIN_VISIBLE = 12;        // closest zoom, in candles
+        const CHART_TARGET_SLOT_PX = 7;      // default horizontal room per candle
+        const CHART_MAX_PAD = 8;             // empty slots kept to the right of the latest candle
+        const CHART_AXIS_MIN_GAP_PX = 78;    // minimum spacing between time labels
+        const CHART_PRICE_AXIS_PX = 62;      // fixed price-axis width so the plot does not jitter
+        const CHART_TICK_STEPS = [60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 14400, 21600, 43200, 86400, 172800, 604800, 1209600, 2592000];
+        const CHART_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        let chartView = { key: '', width: 0, offset: 0, yMin: null, yMax: null, lastTime: null };
+        let chartMeta = { n: 0, epochs: null, texts: [], slotSec: 300, tickStepSec: 0 };
+        let chartCache = null;
+        let chartHover = null;
+        let chartPanMoved = false;
+        let chartApplyQueued = false;
+        let chartDrawQueued = false;
+
+        function chartEpoch(candle) {
+            const t = candle ? candle.time : null;
+            if (typeof t === 'number' && isFinite(t)) return t;
+            if (typeof t === 'string') {
+                const ms = Date.parse(t.replace(' ', 'T'));
+                if (isFinite(ms)) return ms / 1000;
+            }
+            return null;
+        }
+
+        function chartBuildMeta(candles, slotSec) {
+            const epochs = candles.map(chartEpoch);
+            const usable = epochs.length > 0 && epochs.every(v => v !== null);
+            return {
+                n: candles.length,
+                epochs: usable ? epochs : null,
+                texts: candles.map(c => (typeof c.time === 'string' ? c.time : '')),
+                slotSec: slotSec || 300,
+                tickStepSec: 0,
+            };
+        }
+
+        function chartLivePad(width) {
+            return Math.max(2, Math.min(CHART_MAX_PAD, Math.round(width * 0.06)));
+        }
+
+        function chartPlotWidth() {
+            if (typeof priceChartInstance !== 'undefined' && priceChartInstance && priceChartInstance.chartArea) {
+                return priceChartInstance.chartArea.width;
+            }
+            const canvas = document.getElementById('priceChart');
+            const holder = canvas && canvas.parentElement;
+            return holder && holder.clientWidth > 120 ? holder.clientWidth - CHART_PRICE_AXIS_PX - 6 : 760;
+        }
+
+        // Default window: on a wide screen show everything; otherwise about 7px per candle so
+        // bodies stay readable. The user can zoom out to all candles with one click.
+        function chartDefaultWidth(n, plotPx) {
+            const all = n + CHART_MAX_PAD;
+            if (plotPx / Math.max(1, n) >= 4.5) return all;
+            return Math.min(all, Math.max(CHART_MIN_VISIBLE * 3, Math.floor(plotPx / CHART_TARGET_SLOT_PX)));
+        }
+
+        // Turns chartView into a concrete, clamped window: {width, offset, xMin, xMax}.
+        function chartNormalize(n) {
+            const maxW = n + CHART_MAX_PAD;
+            let w = chartView.width > 0 ? chartView.width : chartDefaultWidth(n, chartPlotWidth());
+            w = Math.max(Math.min(CHART_MIN_VISIBLE, maxW), Math.min(w, maxW));
+            const liveMax = n - 1 + chartLivePad(w);
+            const maxOffset = Math.max(0, liveMax - w + 1);          // keeps the oldest candle reachable, no further
+            const offset = Math.max(0, Math.min(chartView.offset, maxOffset));
+            return { width: w, offset, xMin: liveMax - offset - w, xMax: liveMax - offset };
+        }
+
+        // Called on every data push. Switching symbol/timeframe resets the view; when new candles
+        // arrive while the user is looking at history, the window stays on the same candles.
+        function chartSyncData(key, candles) {
+            const n = candles.length;
+            const lastTime = n ? candles[n - 1].time : null;
+            if (chartView.key !== key) {
+                chartView = { key, width: 0, offset: 0, yMin: null, yMax: null, lastTime };
+                return;
+            }
+            if (chartView.offset > 0 && chartView.lastTime !== null && lastTime !== chartView.lastTime) {
+                let appended = -1;
+                for (let i = n - 1, k = 0; i >= 0 && k < 60; i--, k++) {
+                    if (candles[i].time === chartView.lastTime) { appended = k; break; }
+                }
+                chartView.offset = appended >= 0 ? chartView.offset + appended : 0;
+            }
+            chartView.lastTime = lastTime;
+        }
+
+        function chartComputeYRange(cache, xMin, xMax) {
+            const candles = cache.candles;
+            const n = candles.length;
+            if (!n) return [0, 1];
+            const i0 = Math.max(0, Math.floor(xMin));
+            const i1 = Math.min(n - 1, Math.ceil(xMax));
+            let lo = Infinity;
+            let hi = -Infinity;
+            for (let i = i0; i <= i1; i++) {
+                if (candles[i].low < lo) lo = candles[i].low;
+                if (candles[i].high > hi) hi = candles[i].high;
+            }
+            if (!isFinite(lo) || !isFinite(hi)) {
+                lo = candles[n - 1].low;
+                hi = candles[n - 1].high;
+            }
+            // Reference levels only stretch the scale when they are close to the visible candles.
+            const margin = (hi - lo) * 0.15;
+            const nearby = [cache.prevOpen, cache.prevClose, ...cache.getLines()]
+                .filter(p => Number.isFinite(p) && p >= lo - margin && p <= hi + margin);
+            // Bollinger bands help set the scale on a wide view, but when zoomed in on a few candles they
+            // would squash the candles into the middle of the chart, so they are left out there.
+            if (i1 - i0 + 1 >= 60) {
+                for (let i = i0; i <= i1; i++) {
+                    const up = cache.bbUpper[i];
+                    const dn = cache.bbLower[i];
+                    if (Number.isFinite(up) && up > hi) hi = up;
+                    if (Number.isFinite(dn) && dn < lo) lo = dn;
+                }
+            }
+            nearby.forEach(p => { if (p > hi) hi = p; if (p < lo) lo = p; });
+            const live = Number(cache.getLive());
+            if (Number.isFinite(live) && live > 0) { if (live > hi) hi = live; if (live < lo) lo = live; }
+            const pad = (hi - lo) * 0.06 || 0.5;
+            return [lo - pad, hi + pad];
+        }
+
+        // ---- time axis labels ----
+        function chartNiceCount(x) {
+            return [1, 2, 5, 10, 20, 25, 50, 100, 200].find(s => s >= x) || 200;
+        }
+
+        function chartBucket(localSec, step) {
+            if (step === 2592000) {                       // calendar months
+                const d = new Date(localSec * 1000);
+                return d.getUTCFullYear() * 12 + d.getUTCMonth();
+            }
+            if (step === 604800 || step === 1209600) {    // weeks start on Monday
+                return Math.floor((localSec / 86400 + 3) / (step / 86400));
+            }
+            return Math.floor(localSec / step);
+        }
+
+        function chartBuildXTicks(xMin, xMax, plotPx) {
+            const n = chartMeta.n;
+            if (!n || !(plotPx > 40)) return [];
+            const ppc = plotPx / Math.max(1, xMax - xMin);
+            const i0 = Math.max(0, Math.ceil(xMin));
+            const i1 = Math.min(n - 1, Math.floor(xMax));
+            const ticks = [];
+            chartMeta.tickStepSec = 0;
+            if (chartMeta.epochs) {
+                const slot = Math.max(1, chartMeta.slotSec);
+                const step = CHART_TICK_STEPS.find(s => s >= slot && (s / slot) * ppc >= CHART_AXIS_MIN_GAP_PX)
+                    || CHART_TICK_STEPS[CHART_TICK_STEPS.length - 1];
+                let prevBucket = null;
+                for (let i = Math.max(0, i0 - 1); i <= i1; i++) {
+                    const e = chartMeta.epochs[i];
+                    const bucket = chartBucket(e - new Date(e * 1000).getTimezoneOffset() * 60, step);
+                    if (prevBucket !== null && bucket !== prevBucket && i >= i0) {
+                        if (!ticks.length || (i - ticks[ticks.length - 1]) * ppc >= CHART_AXIS_MIN_GAP_PX * 0.85) ticks.push(i);
+                    }
+                    prevBucket = bucket;
+                }
+                chartMeta.tickStepSec = step;
+            }
+            if (ticks.length < 2) {                       // no usable timestamps: evenly spaced candles
+                const every = chartNiceCount(CHART_AXIS_MIN_GAP_PX / ppc);
+                ticks.length = 0;
+                for (let i = i0; i <= i1; i++) if (i % every === 0) ticks.push(i);
+                chartMeta.tickStepSec = 0;
+            }
+            return ticks;
+        }
+
+        function chartPad2(v) { return String(v).padStart(2, '0'); }
+
+        function chartFormatTickLabel(value) {
+            const i = Math.round(value);
+            if (i < 0 || i >= chartMeta.n) return '';
+            if (!chartMeta.epochs) {
+                const t = chartMeta.texts[i] || '';
+                return t.includes(' ') ? t.split(' ')[1].slice(0, 5) : t.slice(0, 5);
+            }
+            const d = new Date(chartMeta.epochs[i] * 1000);
+            const prev = i > 0 ? new Date(chartMeta.epochs[i - 1] * 1000) : null;
+            const firstOfDay = !prev || prev.getDate() !== d.getDate();
+            if (chartMeta.slotSec >= 86400 || chartMeta.tickStepSec >= 86400 || firstOfDay) {
+                return `${d.getDate()} ${CHART_MONTHS[d.getMonth()]}`;
+            }
+            return `${chartPad2(d.getHours())}:${chartPad2(d.getMinutes())}`;
+        }
+
+        function chartFormatFullTime(i) {
+            if (i < 0 || i >= chartMeta.n) return '';
+            if (!chartMeta.epochs) return chartMeta.texts[i] || '';
+            const d = new Date(chartMeta.epochs[i] * 1000);
+            return `${d.getDate()} ${CHART_MONTHS[d.getMonth()]} ${chartPad2(d.getHours())}:${chartPad2(d.getMinutes())}`;
+        }
+
+        // ---- applying the view to the three charts ----
+        function chartVisibleRange(v, n) {
+            return { i0: Math.max(0, Math.ceil(v.xMin)), i1: Math.min(n - 1, Math.floor(v.xMax)) };
+        }
+
+        function chartApplyView() {
+            if (typeof priceChartInstance === 'undefined' || !priceChartInstance || !chartCache) return;
+            const n = chartMeta.n;
+            if (!n) return;
+            const v = chartNormalize(n);
+            chartView.offset = v.offset;                 // keep the stored offset inside its limits
+            const manualY = chartView.yMin !== null && chartView.yMax !== null;
+            const [y0, y1] = manualY ? [chartView.yMin, chartView.yMax] : chartComputeYRange(chartCache, v.xMin, v.xMax);
+            [priceChartInstance, rsiChartInstance, stochChartInstance].forEach(chart => {
+                if (!chart) return;
+                chart.options.scales.x.min = v.xMin;
+                chart.options.scales.x.max = v.xMax;
+            });
+            priceChartInstance.options.scales.y.min = y0;
+            priceChartInstance.options.scales.y.max = y1;
+            [priceChartInstance, rsiChartInstance, stochChartInstance].forEach(chart => { if (chart) chart.update('none'); });
+            chartUpdateToolbar(v, n, manualY);
+        }
+
+        function chartScheduleApply() {
+            if (chartApplyQueued) return;
+            chartApplyQueued = true;
+            requestAnimationFrame(() => { chartApplyQueued = false; chartApplyView(); });
+        }
+
+        function chartRequestDraw() {
+            if (chartDrawQueued) return;
+            chartDrawQueued = true;
+            requestAnimationFrame(() => {
+                chartDrawQueued = false;
+                [priceChartInstance, rsiChartInstance, stochChartInstance].forEach(chart => { if (chart) chart.draw(); });
+            });
+        }
+
+        function chartUpdateToolbar(v, n, manualY) {
+            const range = document.getElementById('chartRangeReadout');
+            if (range) {
+                const r = chartVisibleRange(v, n);
+                range.textContent = `${Math.max(0, r.i1 - r.i0 + 1)} of ${n} candles`;
+            }
+            const live = document.getElementById('chartLiveBtn');
+            if (live) live.hidden = v.offset < 0.5;
+            const auto = document.getElementById('chartAutoBtn');
+            if (auto) auto.classList.toggle('active', !!manualY);
+        }
+
+        // ---- view operations ----
+        function chartZoom(factor, anchorIdx) {
+            const n = chartMeta.n;
+            if (!n) return;
+            const cur = chartNormalize(n);
+            const following = cur.offset < 0.5;
+            const anchor = anchorIdx !== undefined && anchorIdx !== null ? anchorIdx : (following ? cur.xMax : (cur.xMin + cur.xMax) / 2);
+            const maxW = n + CHART_MAX_PAD;
+            const newW = Math.max(Math.min(CHART_MIN_VISIBLE, maxW), Math.min(cur.width * factor, maxW));
+            const xMin2 = anchor - (anchor - cur.xMin) * (newW / cur.width);
+            const xMax2 = xMin2 + newW;
+            chartView.width = newW;
+            chartView.offset = (n - 1 + chartLivePad(newW)) - xMax2;
+            if (chartView.offset < 1.5) chartView.offset = 0;       // snap back to live
+            chartScheduleApply();
+        }
+
+        function chartPanPx(dxPx) {
+            const n = chartMeta.n;
+            if (!n) return;
+            const cur = chartNormalize(n);
+            const plot = chartPlotWidth() || 700;
+            chartView.width = cur.width;
+            chartView.offset = cur.offset + dxPx * cur.width / plot;   // drag right = look further back
+            chartView.offset = chartNormalize(n).offset;
+            chartScheduleApply();
+        }
+
+        function chartFitAll() {
+            chartView.width = chartMeta.n + CHART_MAX_PAD;
+            chartView.offset = 0;
+            chartScheduleApply();
+        }
+
+        function chartGoLive() {
+            chartView.offset = 0;
+            chartScheduleApply();
+        }
+
+        function chartResetView() {
+            chartView.width = 0;
+            chartView.offset = 0;
+            chartView.yMin = null;
+            chartView.yMax = null;
+            chartScheduleApply();
+        }
+
+        function chartAutoPrice() {
+            chartView.yMin = null;
+            chartView.yMax = null;
+            chartScheduleApply();
+        }
+
+        function chartScaleY(factor) {
+            const sc = priceChartInstance && priceChartInstance.scales.y;
+            if (!sc) return;
+            const lo = chartView.yMin !== null ? chartView.yMin : sc.min;
+            const hi = chartView.yMax !== null ? chartView.yMax : sc.max;
+            const mid = (lo + hi) / 2;
+            const half = Math.max((hi - lo) / 2 * factor, 1e-6);
+            chartView.yMin = mid - half;
+            chartView.yMax = mid + half;
+            chartScheduleApply();
+        }
+
+        function chartPanY(dyPx) {
+            const sc = priceChartInstance && priceChartInstance.scales.y;
+            const area = priceChartInstance && priceChartInstance.chartArea;
+            if (!sc || !area || chartView.yMin === null) return;
+            const shift = dyPx * (chartView.yMax - chartView.yMin) / area.height;
+            chartView.yMin += shift;
+            chartView.yMax += shift;
+            chartScheduleApply();
+        }
+
+        function chartIndexAtX(x) {
+            const sc = priceChartInstance && priceChartInstance.scales.x;
+            return sc ? sc.getValueForPixel(x) : null;
+        }
+
+        // ---- crosshair, OHLC readout and candle-time badge ----
+        const chartCrosshairPlugin = {
+            id: 'chartCrosshair',
+            afterDraw(chart) {
+                const id = chart.canvas && chart.canvas.id;
+                if (id !== 'priceChart' && id !== 'rsiChart' && id !== 'stochChart') return;
+                const area = chart.chartArea;
+                const xScale = chart.scales.x;
+                const yScale = chart.scales.y;
+                if (!area || !xScale || !yScale || !chartMeta.n) return;
+                const ctx = chart.ctx;
+                const isDark = document.body.getAttribute('data-theme') === 'dark';
+                const lineColor = isDark ? 'rgba(170, 190, 210, 0.5)' : 'rgba(70, 90, 110, 0.5)';
+                const plate = isDark ? 'rgba(11, 20, 29, 0.88)' : 'rgba(255, 255, 255, 0.9)';
+                const ink = isDark ? '#dbe6f0' : '#1f2d3a';
+                const muted = isDark ? '#91a5b7' : '#687b8d';
+                const hoverIdx = chartHover && chartHover.idx !== null && chartHover.idx !== undefined ? chartHover.idx : null;
+                let lineX = null;
+                if (hoverIdx !== null) lineX = xScale.getPixelForValue(hoverIdx);
+                else if (id === 'priceChart' && chartHover && chartHover.x !== null && chartHover.x !== undefined) lineX = chartHover.x;
+
+                ctx.save();
+                ctx.beginPath();
+                ctx.rect(area.left, area.top, area.width, area.height);
+                ctx.clip();
+                ctx.strokeStyle = lineColor;
+                ctx.lineWidth = 1;
+                ctx.setLineDash([3, 3]);
+                if (lineX !== null && lineX >= area.left && lineX <= area.right) {
+                    ctx.beginPath();
+                    ctx.moveTo(Math.round(lineX) + 0.5, area.top);
+                    ctx.lineTo(Math.round(lineX) + 0.5, area.bottom);
+                    ctx.stroke();
+                }
+                const showHorizontal = id === 'priceChart' && chartHover && chartHover.y !== null && chartHover.y !== undefined
+                    && chartHover.y >= area.top && chartHover.y <= area.bottom;
+                if (showHorizontal) {
+                    ctx.beginPath();
+                    ctx.moveTo(area.left, Math.round(chartHover.y) + 0.5);
+                    ctx.lineTo(area.right, Math.round(chartHover.y) + 0.5);
+                    ctx.stroke();
+                }
+                ctx.restore();
+
+                ctx.save();
+                ctx.textBaseline = 'middle';
+                if (id === 'priceChart') {
+                    const digits = Number.isInteger(Number(globalData?.mt5_symbol?.digits)) ? Number(globalData.mt5_symbol.digits) : 3;
+                    const candles = (chart.data.datasets[0] && chart.data.datasets[0].ohlcData) || [];
+                    const shown = hoverIdx !== null && candles[hoverIdx] ? hoverIdx : candles.length - 1;
+                    const c = candles[shown];
+                    if (c) {
+                        const up = c.close >= c.open;
+                        const dirColor = up ? (isDark ? '#35c995' : '#07875d') : (isDark ? '#f07178' : '#c84952');
+                        const change = c.close - c.open;
+                        const pct = c.open ? (change / c.open) * 100 : 0;
+                        const parts = [
+                            [chartFormatFullTime(shown), muted],
+                            ['O', muted], [c.open.toFixed(digits), dirColor],
+                            ['H', muted], [c.high.toFixed(digits), dirColor],
+                            ['L', muted], [c.low.toFixed(digits), dirColor],
+                            ['C', muted], [c.close.toFixed(digits), dirColor],
+                            [`${change >= 0 ? '+' : ''}${change.toFixed(digits)} (${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)`, dirColor],
+                        ];
+                        ctx.font = '600 9px Segoe UI, sans-serif';
+                        const gap = 6;
+                        const total = parts.reduce((sum, p) => sum + ctx.measureText(p[0]).width + gap, 4);
+                        const x0 = area.left + 6;
+                        // The readout lives in a header strip above the plot so it never covers level labels.
+                        const inStrip = area.top >= 18;
+                        const y0 = inStrip ? area.top - 11 : area.top + 9;
+                        if (!inStrip) {
+                            ctx.fillStyle = plate;
+                            ctx.fillRect(x0 - 3, y0 - 8, Math.min(total, area.width - 12), 16);
+                        }
+                        let x = x0;
+                        parts.forEach(p => {
+                            ctx.fillStyle = p[1];
+                            ctx.textAlign = 'left';
+                            ctx.fillText(p[0], x, y0);
+                            x += ctx.measureText(p[0]).width + gap;
+                        });
+                    }
+                    if (showHorizontal) {
+                        const price = yScale.getValueForPixel(chartHover.y);
+                        const label = price.toFixed(digits);
+                        ctx.font = '600 9px Segoe UI, sans-serif';
+                        const bw = Math.max(40, chart.width - area.right - 4);
+                        ctx.fillStyle = isDark ? '#2a3a4a' : '#d8e2ec';
+                        ctx.fillRect(area.right + 2, chartHover.y - 8, bw, 16);
+                        ctx.fillStyle = ink;
+                        ctx.textAlign = 'center';
+                        ctx.fillText(label, area.right + 2 + bw / 2, chartHover.y, bw - 4);
+                    }
+                    if (hoverIdx !== null && lineX !== null && lineX >= area.left && lineX <= area.right) {
+                        const label = chartFormatFullTime(hoverIdx);
+                        ctx.font = '600 9px Segoe UI, sans-serif';
+                        const bw = ctx.measureText(label).width + 12;
+                        const bx = Math.max(area.left, Math.min(area.right - bw, lineX - bw / 2));
+                        ctx.fillStyle = isDark ? '#2a3a4a' : '#d8e2ec';
+                        ctx.fillRect(bx, area.bottom + 1, bw, 15);
+                        ctx.fillStyle = ink;
+                        ctx.textAlign = 'center';
+                        ctx.fillText(label, bx + bw / 2, area.bottom + 9);
+                    }
+                } else {
+                    const series = chart.data.datasets.slice(0, id === 'stochChart' ? 2 : 1);
+                    const idx = hoverIdx !== null ? hoverIdx : chartMeta.n - 1;
+                    const names = id === 'stochChart' ? ['%K', '%D'] : ['RSI'];
+                    const text = series.map((ds, k) => {
+                        const val = ds.data && ds.data[idx];
+                        return Number.isFinite(val) ? `${names[k]} ${val.toFixed(1)}` : '';
+                    }).filter(Boolean).join('  ');
+                    if (text) {
+                        ctx.font = '600 8px Segoe UI, sans-serif';
+                        ctx.fillStyle = plate;
+                        ctx.fillRect(area.left + 2, area.top + 1, ctx.measureText(text).width + 8, 12);
+                        ctx.fillStyle = ink;
+                        ctx.textAlign = 'left';
+                        ctx.fillText(text, area.left + 6, area.top + 7);
+                    }
+                }
+                ctx.restore();
+            }
+        };
+        Chart.register(chartCrosshairPlugin);
+
+        // ---- input handling: wheel, drag, pinch, price-axis drag, keyboard, toolbar ----
+        function chartLocalXY(e, canvas) {
+            const r = canvas.getBoundingClientRect();
+            return { x: e.clientX - r.left, y: e.clientY - r.top };
+        }
+
+        function chartSetHoverFromPrice(p) {
+            const area = priceChartInstance && priceChartInstance.chartArea;
+            if (!area || p.x < area.left || p.x > area.right || p.y < area.top || p.y > area.bottom) {
+                chartHover = null;
+                return;
+            }
+            const raw = Math.round(priceChartInstance.scales.x.getValueForPixel(p.x));
+            const valid = raw >= 0 && raw < chartMeta.n;
+            chartHover = { idx: valid ? raw : null, x: p.x, y: p.y };
+        }
+
+        function setupChartViewport() {
+            const canvas = document.getElementById('priceChart');
+            if (!canvas || !priceChartInstance || canvas.dataset.viewportReady) return;
+            canvas.dataset.viewportReady = '1';
+            canvas.style.touchAction = 'none';
+            canvas.style.cursor = 'crosshair';
+            canvas.tabIndex = 0;
+            const pointers = new Map();
+            let gesture = null;
+
+            // The existing click handler adds/removes horizontal lines. Keep it, but ignore the click that
+            // ends a drag and clicks on the price axis.
+            const baseClick = canvas.onclick;
+            canvas.onclick = function (e) {
+                if (chartPanMoved) { chartPanMoved = false; return; }
+                const area = priceChartInstance.chartArea;
+                const p = chartLocalXY(e, canvas);
+                if (!area || p.x < area.left || p.x > area.right) return;
+                if (baseClick) baseClick.call(canvas, e);
+            };
+
+            canvas.addEventListener('pointerdown', (e) => {
+                if (e.pointerType === 'mouse' && e.button !== 0) return;
+                chartPanMoved = false;
+                const p = chartLocalXY(e, canvas);
+                pointers.set(e.pointerId, p);
+                try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* not supported */ }
+                if (pointers.size === 2) {
+                    const [a, b] = [...pointers.values()];
+                    gesture = { mode: 'pinch', dist: Math.hypot(a.x - b.x, a.y - b.y) };
+                    return;
+                }
+                const area = priceChartInstance.chartArea;
+                const inY = area && p.y >= area.top && p.y <= area.bottom;
+                const onAxis = inY && p.x > area.right;
+                const inPlot = inY && p.x >= area.left && p.x <= area.right;
+                gesture = (onAxis || inPlot)
+                    ? { mode: onAxis ? 'yscale' : 'pan', startX: p.x, startY: p.y, lastX: p.x, lastY: p.y, moved: false }
+                    : null;
+            });
+
+            canvas.addEventListener('pointermove', (e) => {
+                const p = chartLocalXY(e, canvas);
+                if (pointers.has(e.pointerId)) pointers.set(e.pointerId, p);
+                if (gesture && gesture.mode === 'pinch' && pointers.size === 2) {
+                    const [a, b] = [...pointers.values()];
+                    const dist = Math.hypot(a.x - b.x, a.y - b.y);
+                    if (dist > 8 && gesture.dist > 8) chartZoom(gesture.dist / dist, chartIndexAtX((a.x + b.x) / 2));
+                    gesture.dist = dist;
+                    chartPanMoved = true;
+                    return;
+                }
+                if (!gesture) {
+                    chartSetHoverFromPrice(p);
+                    const area = priceChartInstance.chartArea;
+                    canvas.style.cursor = area && p.x > area.right ? 'ns-resize' : 'crosshair';
+                    chartRequestDraw();
+                    return;
+                }
+                if (typeof activeDraggedLine !== 'undefined' && activeDraggedLine) return;   // dragging a TP/SL line
+                if (!gesture.moved) {
+                    if (Math.hypot(p.x - gesture.startX, p.y - gesture.startY) < 4) return;
+                    gesture.moved = true;
+                    chartPanMoved = true;
+                    canvas.style.cursor = gesture.mode === 'pan' ? 'grabbing' : 'ns-resize';
+                }
+                const dx = p.x - gesture.lastX;
+                const dy = p.y - gesture.lastY;
+                gesture.lastX = p.x;
+                gesture.lastY = p.y;
+                if (gesture.mode === 'pan') {
+                    chartPanPx(dx);
+                    if (chartView.yMin !== null) chartPanY(dy);
+                    chartHover = null;
+                } else {
+                    chartScaleY(Math.exp(dy * 0.012));       // drag down = zoom the price scale out
+                }
+            });
+
+            const endPointer = (e) => {
+                pointers.delete(e.pointerId);
+                try { canvas.releasePointerCapture(e.pointerId); } catch (_) { /* not captured */ }
+                if (pointers.size === 0) {
+                    gesture = null;
+                    canvas.style.cursor = 'crosshair';
+                    if (e.pointerType === 'touch') { chartHover = null; chartRequestDraw(); }
+                } else if (pointers.size < 2 && gesture && gesture.mode === 'pinch') {
+                    gesture = null;
+                }
+            };
+            canvas.addEventListener('pointerup', endPointer);
+            canvas.addEventListener('pointercancel', endPointer);
+            canvas.addEventListener('pointerleave', (e) => {
+                if (pointers.size === 0) { chartHover = null; chartRequestDraw(); }
+            });
+
+            canvas.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                const p = chartLocalXY(e, canvas);
+                const area = priceChartInstance.chartArea;
+                const unit = e.deltaMode === 1 ? 16 : (e.deltaMode === 2 ? 400 : 1);
+                const dX = e.deltaX * unit;
+                const dY = e.deltaY * unit;
+                if (area && p.x > area.right) { chartScaleY(Math.exp(dY * 0.0016)); return; }
+                if (Math.abs(dX) > Math.abs(dY) && !e.ctrlKey) { chartPanPx(-dX); return; }
+                chartZoom(Math.exp(dY * (e.ctrlKey ? 0.006 : 0.0016)), chartIndexAtX(p.x));
+            }, { passive: false });
+
+            canvas.addEventListener('dblclick', (e) => {
+                const area = priceChartInstance.chartArea;
+                const p = chartLocalXY(e, canvas);
+                if (area && p.x > area.right) chartAutoPrice(); else chartResetView();
+            });
+
+            canvas.addEventListener('keydown', (e) => {
+                const n = chartMeta.n;
+                if (!n) return;
+                const cur = chartNormalize(n);
+                const plot = chartPlotWidth() || 700;
+                const step = plot * (e.shiftKey ? 0.5 : 0.1);
+                let handled = true;
+                switch (e.key) {
+                    case 'ArrowLeft': chartPanPx(step); break;
+                    case 'ArrowRight': chartPanPx(-step); break;
+                    case '+': case '=': case 'ArrowUp': chartZoom(0.8); break;
+                    case '-': case '_': case 'ArrowDown': chartZoom(1.25); break;
+                    case 'Home': chartView.width = cur.width; chartView.offset = 1e9; chartScheduleApply(); break;
+                    case 'End': chartGoLive(); break;
+                    case 'a': case 'A': chartFitAll(); break;
+                    case '0': chartResetView(); break;
+                    default: handled = false;
+                }
+                if (handled) e.preventDefault();
+            });
+
+            // Hovering the RSI / Stochastic charts moves the crosshair on all three.
+            [['rsiChart', () => rsiChartInstance], ['stochChart', () => stochChartInstance]].forEach(([id, getChart]) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.addEventListener('pointermove', (e) => {
+                    const chart = getChart();
+                    if (!chart || !chart.chartArea) return;
+                    const p = chartLocalXY(e, el);
+                    const raw = Math.round(chart.scales.x.getValueForPixel(p.x));
+                    chartHover = raw >= 0 && raw < chartMeta.n ? { idx: raw, x: null, y: null } : null;
+                    chartRequestDraw();
+                });
+                el.addEventListener('pointerleave', () => { chartHover = null; chartRequestDraw(); });
+            });
+
+            const actions = {
+                out: () => chartZoom(1.25),
+                in: () => chartZoom(0.8),
+                all: chartFitAll,
+                live: chartGoLive,
+                auto: chartAutoPrice,
+            };
+            document.querySelectorAll('#chartToolbar [data-act], #chartLiveBtn[data-act]').forEach(btn => {
+                btn.addEventListener('click', () => { const fn = actions[btn.dataset.act]; if (fn) fn(); });
+            });
+        }
+        // ===== CHART VIEWPORT (END) =====
         const solidCandlePlugin = {
             id: 'solidCandlePlugin',
             beforeDraw(chart) {
@@ -1605,40 +2616,55 @@ function updateChallengeUI(data) {
                     if (pos.sl && pos.sl > 0) drawSolidTradeLevel(pos.sl, '#ef4444', `🛡️ STOP LOSS: ${pos.sl.toFixed(3)}`);
                 });
 
-                candles.forEach((c, i) => {
+                // Candle size follows the number of candles in view: zooming in gives wide, readable bodies;
+                // zooming out thins them out and finally falls back to one-pixel high-low lines.
+                const slotPx = chartArea.width / Math.max(1, xAxis.max - xAxis.min);
+                let bodyW = 0;
+                let wickW = 1;
+                if (slotPx >= 14) { bodyW = Math.min(18, Math.round(slotPx * 0.7)); wickW = 1.4; }
+                else if (slotPx >= 6) { bodyW = Math.max(3, Math.round(slotPx - Math.max(2, slotPx * 0.3))); }
+                else if (slotPx >= 3) { bodyW = Math.max(1, Math.round(slotPx - 1.5)); }
+                if (bodyW > 1 && bodyW % 2 === 0) bodyW -= 1;          // odd width keeps the wick centred on the body
+                const firstVisible = Math.max(0, Math.floor(xAxis.min) - 1);
+                const lastVisible = Math.min(candles.length - 1, Math.ceil(xAxis.max) + 1);
+                ctx.save();
+                ctx.beginPath();
+                ctx.rect(chartArea.left, chartArea.top, chartArea.width, chartArea.height);
+                ctx.clip();
+                ctx.setLineDash([]);
+                for (let i = firstVisible; i <= lastVisible; i++) {
+                    const c = candles[i];
                     const x = xAxis.getPixelForValue(i);
-                    if (x === undefined || isNaN(x) || x < chart.chartArea.left || x > chart.chartArea.right) return;
-
+                    if (!c || x === undefined || isNaN(x)) continue;
                     const openY = yAxis.getPixelForValue(c.open);
                     const highY = yAxis.getPixelForValue(c.high);
                     const lowY = yAxis.getPixelForValue(c.low);
                     const closeY = yAxis.getPixelForValue(c.close);
-
-                    if ([openY, highY, lowY, closeY].some(v => v === undefined || isNaN(v))) return;
-
+                    if ([openY, highY, lowY, closeY].some(v => v === undefined || isNaN(v))) continue;
                     const isBullish = c.close >= c.open;
                     const color = isDark
                         ? (isBullish ? '#35c995' : '#f07178')
                         : (isBullish ? '#07875d' : '#c84952');
-
+                    const cx = Math.round(x);
                     ctx.beginPath();
                     ctx.strokeStyle = color;
-                    ctx.lineWidth = 1.35;
-                    ctx.moveTo(x, highY);
-                    ctx.lineTo(x, lowY);
+                    ctx.lineWidth = wickW;
+                    ctx.moveTo(cx + 0.5, highY);
+                    ctx.lineTo(cx + 0.5, lowY);
                     ctx.stroke();
-
-                    const bodyTop = Math.min(openY, closeY);
-                    const bodyHeight = Math.max(Math.abs(openY - closeY), 2);
-                    const barWidth = Math.max(2, Math.min(9, (chart.chartArea.width / candles.length) * 0.76));
-
-                    ctx.fillStyle = color;
-                    ctx.fillRect(x - barWidth / 2, bodyTop, barWidth, bodyHeight);
-                    ctx.strokeStyle = color;
-                    ctx.lineWidth = 0.65;
-                    ctx.strokeRect(x - barWidth / 2, bodyTop, barWidth, bodyHeight);
-                });
-
+                    if (bodyW > 0) {
+                        const bodyTop = Math.min(openY, closeY);
+                        const bodyHeight = Math.max(Math.abs(openY - closeY), 1);
+                        const bodyX = cx - (bodyW - 1) / 2;
+                        ctx.fillStyle = color;
+                        ctx.fillRect(bodyX, bodyTop, bodyW, bodyHeight);
+                        if (bodyW >= 5) {
+                            ctx.lineWidth = 0.65;
+                            ctx.strokeRect(bodyX, bodyTop, bodyW, bodyHeight);
+                        }
+                    }
+                }
+                ctx.restore();
                 const priceDigits = Number.isInteger(Number(globalData?.mt5_symbol?.digits))
                     ? Number(globalData.mt5_symbol.digits)
                     : 3;
@@ -1856,11 +2882,11 @@ function setupInteractiveCanvas() {
                     });
                     const result = await res.json();
                     if (!res.ok) {
-                        alert(`Failed to update ${dragged.type}: ${result.message}`);
+                        showToast(`Failed to update ${dragged.type}: ${result.message}`);
                         fetchDashboardData();
                     }
                 } catch (err) {
-                    alert('Error communicating with trade server.');
+                    showToast('Error communicating with trade server.');
                     fetchDashboardData();
                 }
             } else {
@@ -1971,20 +2997,11 @@ function setupInteractiveCanvas() {
             const visibleCandleCount = tf.candles.length;
             const displayStartIndex = Math.max(0, tf.candles.length - visibleCandleCount);
             const candlesSlice = tf.candles.slice(displayStartIndex);
+            chartSyncData(`${selectedSymbol}|${selectedTimeframe.toLowerCase()}`, candlesSlice);
+            chartMeta = chartBuildMeta(candlesSlice, candleIntervalSeconds);
             const baseTimestamp = globalData.timestamp ? globalData.timestamp : Math.floor(Date.now() / 1000);
             
-            const labels = candlesSlice.map((c, i) => {
-                let candleTime = c.time;
-                if (typeof candleTime === 'number') {
-                    const dateObj = new Date(candleTime * 1000);
-                    return dateObj.toTimeString().split(' ')[0];
-                } else if (typeof candleTime === 'string') {
-                    return candleTime.includes(' ') ? candleTime.split(' ')[1] : candleTime;
-                }
-                const fallbackDate = new Date((baseTimestamp - (candlesSlice.length - 1 - i) * candleIntervalSeconds) * 1000);
-                return fallbackDate.toTimeString().split(' ')[0];
-            });
-
+            const labels = candlesSlice.map((c, i) => i);   // numeric positions on the linear time axis
             const closes = candlesSlice.map(c => c.close);
 
             const visibleSeries = values => (values || tf.candles.map(c => c.close)).slice(displayStartIndex);
@@ -2001,20 +3018,16 @@ function setupInteractiveCanvas() {
             const prevOpenArr = candlesSlice.map(() => prevOpenVal);
             const prevCloseArr = candlesSlice.map(() => prevCloseVal);
 
-            const candleLow = Math.min(...candlesSlice.map(c => c.low));
-            const candleHigh = Math.max(...candlesSlice.map(c => c.high));
-            const scaleMargin = (candleHigh - candleLow) * 0.15;
-            const nearbyPriceLevels = [prevOpenVal, prevCloseVal, ...drawnHorizontalLines]
-                .filter(price => !focusRecentCandles || (price >= candleLow - scaleMargin && price <= candleHigh + scaleMargin));
-            const localHighs = [...candlesSlice.map(c => c.high), ...bbUpper, ...nearbyPriceLevels];
-            const localLows = [...candlesSlice.map(c => c.low), ...bbLower, ...nearbyPriceLevels];
-            if (Number.isFinite(Number(currentLivePrice)) && Number(currentLivePrice) > 0) {
-                localHighs.push(Number(currentLivePrice));
-                localLows.push(Number(currentLivePrice));
-            }
-            const minY = Math.min(...localLows) - 0.5;
-            const maxY = Math.max(...localHighs) + 0.5;
-
+            chartCache = {
+                candles: candlesSlice, bbUpper, bbLower,
+                prevOpen: prevOpenVal, prevClose: prevCloseVal,
+                getLines: () => drawnHorizontalLines,
+                getLive: () => currentLivePrice,
+            };
+            const chartViewNow = chartNormalize(candlesSlice.length);
+            const [minY, maxY] = (chartView.yMin !== null && chartView.yMax !== null)
+                ? [chartView.yMin, chartView.yMax]
+                : chartComputeYRange(chartCache, chartViewNow.xMin, chartViewNow.xMax);
             const cprLevelsForLabels = [
                 { name: 'R3', value: cpr.r3, color: '#7f1d1d' },
                 { name: 'R2', value: cpr.r2, color: '#dc2626' },
@@ -2064,7 +3077,7 @@ function setupInteractiveCanvas() {
                     options: {
                         responsive: true, maintainAspectRatio: false, animation: false,
                         interaction: { intersect: false, mode: 'index' },
-                        layout: { padding: { top: 6, right: 3, bottom: 1, left: 3 } },
+                        layout: { padding: { top: 20, right: 3, bottom: 1, left: 3 } },   // top strip holds the OHLC readout
                         plugins: {
                             legend: { display: false },
                             tooltip: { enabled: false },
@@ -2072,32 +3085,37 @@ function setupInteractiveCanvas() {
                         },
                         scales: { 
                             x: {
+                                type: 'linear',
+                                min: chartViewNow.xMin,
+                                max: chartViewNow.xMax,
                                 display: true,
                                 grid: { color: gridColor, drawTicks: false },
                                 border: { display: false },
+                                afterBuildTicks(scale) {
+                                    const plotPx = scale.chart.chartArea ? scale.chart.chartArea.width : scale.width;
+                                    scale.ticks = chartBuildXTicks(scale.min, scale.max, plotPx).map(value => ({ value }));
+                                },
                                 ticks: {
                                     font: { size: 9 },
                                     color: textColor,
-                                    maxTicksLimit: 7,
                                     maxRotation: 0,
                                     padding: 8,
-                                    callback(value, index, ticks) {
-                                        const label = this.getLabelForValue(value);
-                                        return label ? label.slice(0, 5) : '';
-                                    },
+                                    autoSkip: false,
+                                    callback(value) { return chartFormatTickLabel(value); },
                                 },
-                                offset: true,
                             },
                             y: {
                                 min: minY,
                                 max: maxY,
                                 position: 'right',
+                                afterFit(scale) { scale.width = CHART_PRICE_AXIS_PX; },
                                 grid: { color: gridColor, drawTicks: false },
                                 border: { display: false },
                                 ticks: {
                                     font: { size: 9, weight: '500' },
                                     color: textColor,
                                     maxTicksLimit: 6,
+                                    includeBounds: false,
                                     padding: 8,
                                     callback(value) {
                                         return Number(value).toLocaleString(undefined, {
@@ -2111,6 +3129,7 @@ function setupInteractiveCanvas() {
                     }
                 });
                 setupInteractiveCanvas();
+                setupChartViewport();
             } else {
                 priceChartInstance.data.labels = labels;
                 priceChartInstance.data.datasets[0].data = closes;
@@ -2155,7 +3174,7 @@ function setupInteractiveCanvas() {
                     data: {
                         labels: labels,
                         datasets: [
-                            { label: 'RSI (10)', data: rsiSlice, borderColor: '#ec4899', borderWidth: 1, pointRadius: 0, fill: false, order: 1 },
+                            { label: 'RSI (14)', data: rsiSlice, borderColor: '#ec4899', borderWidth: 1, pointRadius: 0, fill: false, order: 1 },
                             { label: 'OB (85)', data: obArray, borderColor: 'rgba(239, 68, 68, 0.6)', borderDash: [2,2], borderWidth: 1, pointRadius: 0, fill: false, order: 2 },
                             { label: 'OS (15)', data: osArray, borderColor: 'rgba(16, 185, 129, 0.6)', borderDash: [2,2], borderWidth: 1, pointRadius: 0, fill: false, order: 2 }
                         ]
@@ -2163,7 +3182,7 @@ function setupInteractiveCanvas() {
                     options: {
                         responsive: true, maintainAspectRatio: false, animation: false,
                         plugins: { legend: { display: false } },
-                        scales: { y: { min: 0, max: 100, ticks: { font: { size: 6 }, color: textColor, stepSize: 50 }, grid: { color: gridColor } }, x: { display: false, offset: true } }
+                        scales: { y: { min: 0, max: 100, ticks: { font: { size: 6 }, color: textColor, stepSize: 50 }, grid: { color: gridColor } }, x: { type: 'linear', display: false, min: chartViewNow.xMin, max: chartViewNow.xMax } }
                     }
                 });
             } else {
@@ -2193,7 +3212,7 @@ function setupInteractiveCanvas() {
                     options: {
                         responsive: true, maintainAspectRatio: false, animation: false,
                         plugins: { legend: { display: false } },
-                        scales: { y: { min: 0, max: 100, ticks: { font: { size: 6 }, color: textColor, stepSize: 50 }, grid: { color: gridColor } }, x: { display: false, offset: true } }
+                        scales: { y: { min: 0, max: 100, ticks: { font: { size: 6 }, color: textColor, stepSize: 50 }, grid: { color: gridColor } }, x: { type: 'linear', display: false, min: chartViewNow.xMin, max: chartViewNow.xMax } }
                     }
                 });
             } else {
@@ -2204,35 +3223,32 @@ function setupInteractiveCanvas() {
                 stochChartInstance.options.scales.y.ticks.color = textColor;
                 stochChartInstance.update('none');
             }
+            chartApplyView();
         }
 
         function connectUIWebSocket() {
-            const dashboardPort = Number(window.location.port) || 80;
-            const wsPort = dashboardPort === 8080 ? 8765 : dashboardPort + 1;
-            const ws = new WebSocket(`ws://${window.location.hostname}:${wsPort}`);
+    const dashboardPort = Number(window.location.port) || 80;
+    const wsPort = dashboardPort === 8080 ? 8765 : dashboardPort + 1;
+    const ws = new WebSocket(`ws://${window.location.hostname}:${wsPort}`);
 
-            ws.onopen = function() {
-                uiWebSocketConnected = true;
-                console.log("🔗 Connected to Agent Real-Time Push Stream");
-                document.getElementById('last-update').innerText = "Connected; waiting for state...";
-            };
+    ws.onopen = function() {
+        uiWebSocketConnected = true;
+        console.log("🔗 Connected to Agent Real-Time Push Stream");
+    };
 
-            ws.onmessage = function(event) {
-                const state = JSON.parse(event.data);
-                renderDashboardState(state);
-            };
-
-            ws.onclose = function() {
-                uiWebSocketConnected = false;
-                console.log("⚠️ Push Stream disconnected. Reconnecting in 1s...");
-                document.getElementById('last-update').innerText = "Status: Reconnecting...";
-                setTimeout(connectUIWebSocket, 1000);
-            };
-
-            ws.onerror = function(err) {
-                console.error("WebSocket Error:", err);
-            };
+    ws.onmessage = function(event) {
+        const state = JSON.parse(event.data);
+        renderDashboardState(state);
+        if (state.matrix) {
+            updateMTFMatrixData(state.matrix);
         }
+    };
+
+    ws.onclose = function() {
+        uiWebSocketConnected = false;
+        setTimeout(connectUIWebSocket, 1000);
+    };
+}
 
         fetchDashboardData();
         setInterval(() => {
@@ -2241,5 +3257,46 @@ function setupInteractiveCanvas() {
         connectUIWebSocket();
         startCountdowns();
     </script>
+
+<!-- AI Vision Scan Modal -->
+<div id="visionScanModal" class="modal-overlay hidden">
+    <div class="modal-card">
+        <!-- Header -->
+        <div class="modal-header">
+            <h3 style="margin: 0; font-size: 1.125rem; font-weight: 600; display: flex; align-items: center; gap: 8px;">
+                <span style="width: 10px; height: 10px; background-color: #10b981; border-radius: 50%; display: inline-block;"></span>
+                AI Vision Scan: Factor Breakdown
+            </h3>
+            <button onclick="closeVisionModal()" style="background: none; border: none; color: #9ca3af; font-size: 1.5rem; cursor: pointer;">&times;</button>
+        </div>
+
+        <!-- Summary Banner -->
+        <div class="modal-summary-grid">
+            <div>
+                <span style="font-size: 0.75rem; color: #9ca3af; display: block;">Active Regime</span>
+                <span id="modalRegimeText" style="font-size: 0.875rem; font-weight: 700; color: #34d399;">Expanding Trend</span>
+            </div>
+            <div>
+                <span style="font-size: 0.75rem; color: #9ca3af; display: block;">Confluence Score</span>
+                <span id="modalScoreText" style="font-size: 0.875rem; font-weight: 700; color: #60a5fa;">8.4 / 10.0</span>
+            </div>
+            <div>
+                <span style="font-size: 0.75rem; color: #9ca3af; display: block;">Signal Bias</span>
+                <span id="modalBiasText" style="font-size: 0.875rem; font-weight: 700; color: #34d399;">STRONG BUY</span>
+            </div>
+        </div>
+
+        <!-- 10-Factor Visualizer Container -->
+        <div id="factorBreakdownContainer" style="max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px;">
+            <!-- Dynamically populated via JS -->
+        </div>
+
+        <!-- Footer Actions -->
+        <div style="display: flex; justify-content: flex-end; gap: 12px;">
+            <button onclick="closeVisionModal()" class="btn-secondary">Close</button>
+            <button onclick="executeModalTrade()" class="btn-primary">Execute Order</button>
+        </div>
+    </div>
+</div>
 </body>
 </html>

@@ -24,9 +24,8 @@ Pure numpy; no pandas_ta dependency. Zero network calls.
 from __future__ import annotations
 
 import math
-from typing import Any, Optional
+from typing import Optional
 
-import numpy as np
 import numpy as np
 
 def evaluate_institutional_confluences(df, atr, bb_upper, bb_lower, stoch_k):

@@ -6,7 +6,6 @@ import math
 import os
 import re
 import sys
-import sqlite3
 import threading
 import time
 from datetime import datetime, timezone
@@ -20,14 +19,7 @@ import MetaTrader5 as mt5  # <--- Ensure MetaTrader5 is explicitly imported here
 from mt5_bridge import MT5Bridge
 from websockets.sync.server import serve
 import compounding_challenge
-import time
-import random
-import base64
-import json
-from google import genai
-from google.genai import types
 import asyncio
-import random
 
 from industrial_scanner import perform_industrial_technical_scan, evaluate_institutional_confluences
 
@@ -61,8 +53,7 @@ def background_industrial_monitoring_loop():
         except Exception as e:
             print(f"⚠️ Error in background monitoring loop: {e}")
             time.sleep(5)
-import json
-import websockets
+
 
 async def handle_websocket_telemetry(websocket, path):
     """
@@ -564,7 +555,6 @@ def process_dataframe(df, symbol: str = DEFAULT_SYMBOL):
         "prev_day_close": round(prev_close, 3),
         "ema50": round(float(latest['ema50'] if pd.notna(latest['ema50']) else close_val), 3),
         "ema50_history": _chart_series(tail_df['ema50'], close_val),
-        "ema200": round(float(latest['ema200'] if pd.notna(latest['ema200']) else close_val), 3),
         "ema200_history": _chart_series(tail_df['ema200'], close_val)
     }
 def check_and_sync_closed_telemetry_trades():
@@ -916,7 +906,7 @@ def evaluate_multi_path_strategy(
         "regime": regime,
         "consensus_score": total_score,
         "active_paths": active_paths,
-        "reasoning": f"Style: {ACTIVE_TRADING_STYLE} | Regime: {regime} | SessionWt: {session_weight:.2f} | Score: {total_score} (Threshold: �{min_score})"
+        "reasoning": f"Style: {ACTIVE_TRADING_STYLE} | Regime: {regime} | SessionWt: {session_weight:.2f} | Score: {total_score} (Threshold: ±{min_score})"
     }
 
     action = None

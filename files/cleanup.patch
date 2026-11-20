@@ -1,0 +1,251 @@
+diff --git a/Enhanced_Derive_AI_Engine.py b/Enhanced_Derive_AI_Engine.py
+index cb2ace8..06513f4 100644
+--- a/Enhanced_Derive_AI_Engine.py
++++ b/Enhanced_Derive_AI_Engine.py
+@@ -6,7 +6,6 @@ import math
+ import os
+ import re
+ import sys
+-import sqlite3
+ import threading
+ import time
+ from datetime import datetime, timezone
+@@ -20,14 +19,7 @@ import MetaTrader5 as mt5  # <--- Ensure MetaTrader5 is explicitly imported here
+ from mt5_bridge import MT5Bridge
+ from websockets.sync.server import serve
+ import compounding_challenge
+-import time
+-import random
+-import base64
+-import json
+-from google import genai
+-from google.genai import types
+ import asyncio
+-import random
+ 
+ from industrial_scanner import perform_industrial_technical_scan, evaluate_institutional_confluences
+ 
+@@ -61,8 +53,7 @@ def background_industrial_monitoring_loop():
+         except Exception as e:
+             print(f"⚠️ Error in background monitoring loop: {e}")
+             time.sleep(5)
+-import json
+-import websockets
++
+ 
+ async def handle_websocket_telemetry(websocket, path):
+     """
+@@ -564,7 +555,6 @@ def process_dataframe(df, symbol: str = DEFAULT_SYMBOL):
+         "prev_day_close": round(prev_close, 3),
+         "ema50": round(float(latest['ema50'] if pd.notna(latest['ema50']) else close_val), 3),
+         "ema50_history": _chart_series(tail_df['ema50'], close_val),
+-        "ema200": round(float(latest['ema200'] if pd.notna(latest['ema200']) else close_val), 3),
+         "ema200_history": _chart_series(tail_df['ema200'], close_val)
+     }
+ def check_and_sync_closed_telemetry_trades():
+@@ -916,7 +906,7 @@ def evaluate_multi_path_strategy(
+         "regime": regime,
+         "consensus_score": total_score,
+         "active_paths": active_paths,
+-        "reasoning": f"Style: {ACTIVE_TRADING_STYLE} | Regime: {regime} | SessionWt: {session_weight:.2f} | Score: {total_score} (Threshold: �{min_score})"
++        "reasoning": f"Style: {ACTIVE_TRADING_STYLE} | Regime: {regime} | SessionWt: {session_weight:.2f} | Score: {total_score} (Threshold: ±{min_score})"
+     }
+ 
+     action = None
+diff --git a/compounding_challenge.py b/compounding_challenge.py
+index 60726fc..588112c 100644
+--- a/compounding_challenge.py
++++ b/compounding_challenge.py
+@@ -1,11 +1,9 @@
+ # compounding_challenge.py - Complete Institutional Compounding Challenge Tracker & Risk Manager
+ import os
+-import sqlite3
+ import pandas as pd
+ from datetime import datetime, timezone, timedelta
+ import MetaTrader5 as mt5
+-from datetime import datetime, timezone, timedelta
+-from trading_modules import get_db_connection, calculate_atr, evaluate_trade_risk_reward, monitor_and_cut_stagnant_positions, execute_guarded_order
++from trading_modules import get_db_connection
+ 
+ # Define Eastern Time zone (handling EST / EDT offset safely)
+ # Alternatively, use zoneinfo.ZoneInfo("America/New_York") if on Python 3.9+
+@@ -462,54 +460,6 @@ def get_current_challenge_status():
+         "total_return_pct": round(total_return_pct, 2),
+         "daily_return_pct": round(daily_return_pct, 2)
+     }
+-def sync_external_mt5_mobile_trades():
+-    """Scans MT5 history for any closed trades (including mobile app orders) and syncs them into challenge_trades and daily status."""
+-    try:
+-        conn = get_db_connection(DB_PATH)
+-        cursor = conn.cursor()
+-        
+-        # Get all already recorded tickets
+-        cursor.execute("SELECT ticket FROM challenge_trades")
+-        recorded_tickets = {row[0] for row in cursor.fetchall()}
+-        
+-        utc_from = datetime.now(timezone.utc) - timedelta(days=7)
+-        deals = mt5.history_deals_get(utc_from, datetime.now(timezone.utc))
+-
+-        if not deals:
+-            conn.close()
+-            return
+-
+-        tracker = CompoundingChallengeTracker()
+-        new_trades_found = False
+-
+-        for deal in deals:
+-            # Detect closed deal exits not yet present in challenge_trades
+-            if deal.entry == mt5.DEAL_ENTRY_OUT and deal.position_id not in recorded_tickets:
+-                ticket = deal.position_id
+-                exit_price = float(deal.price)
+-                pnl = float(deal.profit + deal.swap + deal.commission)
+-                exit_reason = "MT5_MOBILE_TP" if pnl > 0 else "MT5_MOBILE_SL"
+-                status = "CLOSED_PROFIT" if pnl > 0 else "CLOSED_LOSS"
+-                action = "BUY" if deal.type == mt5.DEAL_TYPE_BUY else "SELL"
+-                
+-                tracker.log_challenge_trade(
+-                    ticket=ticket,
+-                    symbol=deal.symbol,
+-                    action=action,
+-                    lot_size=deal.volume,
+-                    entry_price=float(deal.price_initial or deal.price),
+-                    exit_price=exit_price,
+-                    pnl=pnl,
+-                    status=status,
+-                    exit_reason=exit_reason
+-                )
+-                new_trades_found = True
+-
+-        conn.close()
+-        if new_trades_found:
+-            print("Successfully synchronized external MT5 mobile trades into challenge tracking.")
+-    except Exception as e:
+-        print(f"Error syncing external MT5 mobile trades: {e}")
+ def sync_external_mt5_mobile_trades():
+     """Scans MT5 history for closed mobile/external trades, skips duplicates, maps them to challenge dates, and records them."""
+     try:
+diff --git a/index.html b/index.html
+index 03e6a2a..fa49136 100644
+--- a/index.html
++++ b/index.html
+@@ -389,7 +389,7 @@ const ChartRiskManagementPlugin = {
+             <!-- Dynamic Lot Sizer with Steppers and Presets -->
+             <div class="lot-sizer-box">
+                 <!-- ✨ AI Multi-TF Vision Trigger Button -->
+-                <button class="btn-ai-vision" id="btnAiScan" onclick="triggerMultiTimeframeAiScan()" title="Scan all timeframes via Gemini Vision">✨ AI Vision Scan</button>
++                <button class="btn-ai-vision" id="btnAiScan" onclick="triggerMultiTimeframeAiScan()" title="Scan all timeframes with the local Industrial Scanner">✨ AI Vision Scan</button>
+                  <select id="symbol-selector" class="symbol-select" onchange="selectTradingSymbol(this.value)" aria-label="Symbol selector">
+                 <option>Loading...</option>
+                 </select>
+@@ -436,7 +436,7 @@ const ChartRiskManagementPlugin = {
+             <div class="chart-metrics">
+                 <div class="metric-row"><span>Trend:</span> <span class="metric-value" id="tf-trend">---</span></div>
+                 <div class="metric-row"><span>EMA 20/50/200:</span> <span class="metric-value" id="tf-ema" style="font-size:0.52rem;">---</span></div>
+-                <div class="metric-row"><span>RSI(10) / ATR:</span> <span class="metric-value"><span id="tf-rsi">---</span> / <span id="tf-atr">---</span></span></div>
++                <div class="metric-row"><span>RSI(14) / ATR:</span> <span class="metric-value"><span id="tf-rsi">---</span> / <span id="tf-atr">---</span></span></div>
+                 <div class="metric-row"><span>Pressure:</span> <span class="metric-value" id="tf-pressure">---</span></div>
+             </div>
+ 
+@@ -453,7 +453,7 @@ const ChartRiskManagementPlugin = {
+             </div>
+ 
+             <div class="oscillator-labels" style="font-size: 0.55rem; color: var(--text-muted); margin-top:2px; display:flex; justify-space-between;">
+-                <span>RSI (10) [OB: 85 / OS: 15]</span>
++                <span>RSI (14) [OB: 85 / OS: 15]</span>
+                 <span style="color: var(--accent-pink);">Stochastic (%K 16, %D 3)</span>
+             </div>
+             <div class="oscillator-charts">
+@@ -974,7 +974,7 @@ function updateChallengeUI(data) {
+             const lotInput = document.getElementById('manualLotSizeInput');
+             const volume = lotInput ? parseFloat(lotInput.value) || 0.10 : 0.10;
+             
+-            showToast(`🚀 Executing Gemini AI ${action} Order (${volume} Lots)...`, "info");
++            showToast(`🚀 Executing Scanner ${action} Order (${volume} Lots)...`, "info");
+             executeManualTrade(action, document.getElementById('btnAiScan'));
+         }
+         // Non-blocking Toast notification system for rapid multi-clicking
+@@ -3174,7 +3174,7 @@ function setupInteractiveCanvas() {
+                     data: {
+                         labels: labels,
+                         datasets: [
+-                            { label: 'RSI (10)', data: rsiSlice, borderColor: '#ec4899', borderWidth: 1, pointRadius: 0, fill: false, order: 1 },
++                            { label: 'RSI (14)', data: rsiSlice, borderColor: '#ec4899', borderWidth: 1, pointRadius: 0, fill: false, order: 1 },
+                             { label: 'OB (85)', data: obArray, borderColor: 'rgba(239, 68, 68, 0.6)', borderDash: [2,2], borderWidth: 1, pointRadius: 0, fill: false, order: 2 },
+                             { label: 'OS (15)', data: osArray, borderColor: 'rgba(16, 185, 129, 0.6)', borderDash: [2,2], borderWidth: 1, pointRadius: 0, fill: false, order: 2 }
+                         ]
+diff --git a/industrial_scanner.py b/industrial_scanner.py
+index 752110a..aa875dc 100644
+--- a/industrial_scanner.py
++++ b/industrial_scanner.py
+@@ -24,9 +24,8 @@ Pure numpy; no pandas_ta dependency. Zero network calls.
+ from __future__ import annotations
+ 
+ import math
+-from typing import Any, Optional
++from typing import Optional
+ 
+-import numpy as np
+ import numpy as np
+ 
+ def evaluate_institutional_confluences(df, atr, bb_upper, bb_lower, stoch_k):
+diff --git a/pyproject.toml b/pyproject.toml
+index 1a535af..cbc2d96 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -7,13 +7,15 @@ name = "enhanced_derive_ai_engine"
+ version = "0.1.0"
+ dependencies = [
+     "pandas>=2.0",
++    "numpy",
+     "pandas-ta",
+-    "websockets",
++    "websockets>=11",
+     "MetaTrader5>=5.0.45",
++    "tzdata; platform_system == 'Windows'",
+ ]
+ 
+ [tool.setuptools]
+-py-modules = ["Enhanced_Derive_AI_Engine", "mt5_bridge"]
++py-modules = ["Enhanced_Derive_AI_Engine", "mt5_bridge", "industrial_scanner", "compounding_challenge", "trading_modules"]
+ 
+ [project.scripts]
+ run-engine = "Enhanced_Derive_AI_Engine:main"
+diff --git a/start_dashboard.bat b/start_dashboard.bat
+index dc5a732..9e0ec35 100644
+--- a/start_dashboard.bat
++++ b/start_dashboard.bat
+@@ -5,7 +5,7 @@ cd /d "%~dp0"
+ set "PYTHON=%~dp0.venv\Scripts\python.exe"
+ if not exist "%PYTHON%" (
+     echo Project virtual environment not found: "%PYTHON%"
+-    echo Install the project dependencies first. See README.md section 5.
++    echo Install the project dependencies first. See README.md section 13.
+     pause
+     exit /b 1
+ )
+diff --git a/start_manual_trading.bat b/start_manual_trading.bat
+index 31b43e8..708c893 100644
+--- a/start_manual_trading.bat
++++ b/start_manual_trading.bat
+@@ -5,7 +5,7 @@ cd /d "%~dp0"
+ set "PYTHON=%~dp0.venv\Scripts\python.exe"
+ if not exist "%PYTHON%" (
+     echo Project virtual environment not found: "%PYTHON%"
+-    echo Install the project dependencies first. See README.md section 5.
++    echo Install the project dependencies first. See README.md section 13.
+     pause
+     exit /b 1
+ )
+diff --git a/tests/test_startup_safety.py b/tests/test_startup_safety.py
+index e40c284..435fc0b 100644
+--- a/tests/test_startup_safety.py
++++ b/tests/test_startup_safety.py
+@@ -446,7 +446,7 @@ class StartupSafetyTests(unittest.TestCase):
+         risk_percent, message = engine.validate_requested_risk_percent({"risk_pct": 0.0101})
+ 
+         self.assertIsNone(risk_percent)
+-        self.assertIn("exceeds the configured", message)
++        self.assertIn("exceeds configured limit", message)
+ 
+ 
+ if __name__ == "__main__":

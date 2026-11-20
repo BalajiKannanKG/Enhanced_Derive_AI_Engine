@@ -1,11 +1,9 @@
 # compounding_challenge.py - Complete Institutional Compounding Challenge Tracker & Risk Manager
 import os
-import sqlite3
 import pandas as pd
 from datetime import datetime, timezone, timedelta
 import MetaTrader5 as mt5
-from datetime import datetime, timezone, timedelta
-from trading_modules import get_db_connection, calculate_atr, evaluate_trade_risk_reward, monitor_and_cut_stagnant_positions, execute_guarded_order
+from trading_modules import get_db_connection
 
 # Define Eastern Time zone (handling EST / EDT offset safely)
 # Alternatively, use zoneinfo.ZoneInfo("America/New_York") if on Python 3.9+
@@ -462,54 +460,6 @@ def get_current_challenge_status():
         "total_return_pct": round(total_return_pct, 2),
         "daily_return_pct": round(daily_return_pct, 2)
     }
-def sync_external_mt5_mobile_trades():
-    """Scans MT5 history for any closed trades (including mobile app orders) and syncs them into challenge_trades and daily status."""
-    try:
-        conn = get_db_connection(DB_PATH)
-        cursor = conn.cursor()
-        
-        # Get all already recorded tickets
-        cursor.execute("SELECT ticket FROM challenge_trades")
-        recorded_tickets = {row[0] for row in cursor.fetchall()}
-        
-        utc_from = datetime.now(timezone.utc) - timedelta(days=7)
-        deals = mt5.history_deals_get(utc_from, datetime.now(timezone.utc))
-
-        if not deals:
-            conn.close()
-            return
-
-        tracker = CompoundingChallengeTracker()
-        new_trades_found = False
-
-        for deal in deals:
-            # Detect closed deal exits not yet present in challenge_trades
-            if deal.entry == mt5.DEAL_ENTRY_OUT and deal.position_id not in recorded_tickets:
-                ticket = deal.position_id
-                exit_price = float(deal.price)
-                pnl = float(deal.profit + deal.swap + deal.commission)
-                exit_reason = "MT5_MOBILE_TP" if pnl > 0 else "MT5_MOBILE_SL"
-                status = "CLOSED_PROFIT" if pnl > 0 else "CLOSED_LOSS"
-                action = "BUY" if deal.type == mt5.DEAL_TYPE_BUY else "SELL"
-                
-                tracker.log_challenge_trade(
-                    ticket=ticket,
-                    symbol=deal.symbol,
-                    action=action,
-                    lot_size=deal.volume,
-                    entry_price=float(deal.price_initial or deal.price),
-                    exit_price=exit_price,
-                    pnl=pnl,
-                    status=status,
-                    exit_reason=exit_reason
-                )
-                new_trades_found = True
-
-        conn.close()
-        if new_trades_found:
-            print("Successfully synchronized external MT5 mobile trades into challenge tracking.")
-    except Exception as e:
-        print(f"Error syncing external MT5 mobile trades: {e}")
 def sync_external_mt5_mobile_trades():
     """Scans MT5 history for closed mobile/external trades, skips duplicates, maps them to challenge dates, and records them."""
     try:

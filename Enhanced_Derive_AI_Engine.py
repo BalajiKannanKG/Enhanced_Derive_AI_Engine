@@ -328,6 +328,11 @@ latest_mt5_account = {}
 latest_mt5_status = mt5_bridge.status()
 last_auto_evaluated_candle_times: dict[str, str] = {}
 auto_trade_lock = threading.Lock()
+# Set every broadcast from the challenge tracker's *final* verdict (after its own auto-resume logic). It is kept
+# apart from AUTO_TRADING_ENABLED, which is the operator's choice: previously a halt read from the database
+# switched that flag off permanently, even after the tracker had resumed, so auto trading never came back.
+CHALLENGE_HALTED = False
+latest_symbol_states = {}     # per-symbol state from the latest broadcast; read by the auto-trading cycle
 scaled_out_positions = set()
 active_trade_evolution_logs: dict[int, list] = {}
 
@@ -927,6 +932,12 @@ def evaluate_multi_path_strategy(
 
     return action, audit
 
+def _order_result_value(result, name, default=None):
+    """Read a field from an MT5 OrderSendResult object or from a plain dict."""
+    value = result.get(name, default) if isinstance(result, dict) else getattr(result, name, default)
+    return default if value is None else value
+
+
 def check_and_auto_trigger_trade(agent_state, symbol: str = DEFAULT_SYMBOL):
     profile = CURRENT_PROFILE
     primary_tf = profile["primary_tf"]
@@ -957,7 +968,7 @@ def check_and_auto_trigger_trade(agent_state, symbol: str = DEFAULT_SYMBOL):
     agent_state["signal"] = action or "HOLD / SCANNING"
     agent_state["decision_audit"] = audit
 
-    if not LIVE_TRADING_ENABLED or not AUTO_TRADING_ENABLED or agent_status != "RUNNING":
+    if not LIVE_TRADING_ENABLED or not AUTO_TRADING_ENABLED or CHALLENGE_HALTED or agent_status != "RUNNING":
         return
 
     if not tf_data.get("data_ready") or not higher_tf_data.get("data_ready"):
@@ -1064,7 +1075,7 @@ def check_and_auto_trigger_trade(agent_state, symbol: str = DEFAULT_SYMBOL):
         "strategy_path": f"Style: {ACTIVE_TRADING_STYLE} | Regime: {audit['regime']} | Score: {audit['consensus_score']} | VolatilityExp: {is_volatility_expansion}"
     }
 
-    with auto_trade_lock:
+    with order_dispatch_lock:
         account_state, bridge_status = mt5_bridge.account_snapshot()
         if account_state is None:
             return
@@ -1076,9 +1087,9 @@ def check_and_auto_trigger_trade(agent_state, symbol: str = DEFAULT_SYMBOL):
         if not risk_allowed:
             return
             
+        # Same cap as the manual endpoint and the dashboard's "Lock n/5" badge: every open position counts.
         all_positions = account_state.get("positions", [])
-        open_managed_positions = [p for p in all_positions if int(p.get("magic", 0)) == MT5_MAGIC_NUMBER]
-        if len(open_managed_positions) >= MAX_OPEN_POSITIONS or not bridge_status.get("trade_allowed"):
+        if len(all_positions) >= MAX_OPEN_POSITIONS or not bridge_status.get("trade_allowed"):
             return
 
         symbol_market = account_state.get("symbols", {}).get(symbol, {})
@@ -1109,7 +1120,9 @@ def check_and_auto_trigger_trade(agent_state, symbol: str = DEFAULT_SYMBOL):
             atr_val=atr,
             min_lot=0.50,
             volume_step=0.01,
-            risk_pct=effective_risk_pct * 100.0
+            # calculate_dynamic_lot_size() takes a PERCENT, and MAX_RISK_PER_TRADE_PERCENT is already a percent
+            # (1.0 = 1%). The previous "* 100.0" turned 1.2% into 120%: roughly 100x the intended lot size.
+            risk_pct=effective_risk_pct
         )
 
         # >>> NORMALIZE LOT SIZE AGAINST BROKER SYMBOL SPECS (Fixes Error 10014) <<<
@@ -1128,30 +1141,38 @@ def check_and_auto_trigger_trade(agent_state, symbol: str = DEFAULT_SYMBOL):
         else:
             lot_size = raw_lot_size
                 
-        # After calculating entry price, stop-loss (sl), take-profit (tp), and lot_size
+        # The signal comes from the closed candle, but the order must be priced from the live quote: a market
+        # order sent at the previous close is rejected by the broker as an invalid price. Stops and target keep
+        # the same ATR distances, measured from the real execution price.
+        tick = mt5.symbol_info_tick(symbol)
+        if tick is None or not (float(tick.ask) > 0 and float(tick.bid) > 0):
+            print(f"[AUTO TRADE SKIPPED] {symbol}: live quote unavailable.")
+            return
+        exec_price = float(tick.ask) if action == "BUY" else float(tick.bid)
+        sl_distance = atr * sl_mult
+        tp_distance = atr * tp_mult
+        stop_loss = exec_price - sl_distance if action == "BUY" else exec_price + sl_distance
+        target_price = exec_price + tp_distance if action == "BUY" else exec_price - tp_distance
         order_type = mt5.ORDER_TYPE_BUY if action == "BUY" else mt5.ORDER_TYPE_SELL
 
         succeeded, message, result = execute_guarded_order(
             symbol=symbol,
             order_type=order_type,
             lot_size=lot_size,
-            price=closed_price,
+            price=exec_price,
             sl=stop_loss,
             tp=target_price,
             max_allowed_spread_multiplier=1.5
         )
 
-        if succeeded:
-            ticket = result.get('order') or result.get('deal')
-            # Proceed with logging trade telemetry...
-        else:
+        if not succeeded:
             print(f"[GUARDED ORDER REJECTED] {message}")
-    
+
     if succeeded:
-        ticket = result.get('order')
-        volume = result.get('volume', 0.0)
-        entry = float(result.get('price', closed_price))
-        margin = float(result.get('margin', 0.0))
+        ticket = _order_result_value(result, 'order') or _order_result_value(result, 'deal')
+        volume = _order_result_value(result, 'volume', lot_size)
+        entry = float(_order_result_value(result, 'price', exec_price))
+        margin = float(_order_result_value(result, 'margin', 0.0))
         active_trade_evolution_logs[ticket] = []
         log_trade_event(
             ticket=ticket,
@@ -1325,6 +1346,23 @@ def refresh_mt5_state():
     with mt5_state_lock:
         latest_mt5_account = account or {}
         latest_mt5_status = status
+def run_auto_trading_cycle():
+    """Run the automatic entry check for every symbol. Called once per monitor-loop cycle.
+
+    Does nothing (and costs nothing) unless live trading, auto trading and a RUNNING engine are all on and no
+    challenge halt is active. An error in one symbol never stops the others or the monitor loop.
+    """
+    if not (LIVE_TRADING_ENABLED and AUTO_TRADING_ENABLED and agent_status == "RUNNING") or CHALLENGE_HALTED:
+        return
+    with state_lock:
+        states = {symbol: dict(state) for symbol, state in latest_symbol_states.items()}
+    for symbol, state in states.items():
+        try:
+            check_and_auto_trigger_trade(state, symbol)
+        except Exception as exc:
+            print(f"[AUTO TRADE ERROR] {symbol}: {exc}")
+
+
 def mt5_monitor_loop():
     history_loaded = False
     last_history_attempt = 0.0
@@ -1346,6 +1384,7 @@ def mt5_monitor_loop():
             last_history_attempt = now
         else:
             poll_mt5_market_data()
+        run_auto_trading_cycle()
         time.sleep(1)
 def apply_mt5_tick(symbol: str, price: float, tick_epoch: int):
     global current_price
@@ -1423,7 +1462,7 @@ def poll_mt5_market_data(include_history: bool = False) -> bool:
     return history_loaded
 
 def broadcast_state_update():
-    global latest_state_payload, AUTO_TRADING_ENABLED
+    global latest_state_payload, CHALLENGE_HALTED, latest_symbol_states
     with state_lock:
         with mt5_state_lock:
             mt5_account_data = dict(latest_mt5_account)
@@ -1435,9 +1474,6 @@ def broadcast_state_update():
             except Exception as e:
                 print(f"Challenge metric retrieval error: {e}")
                 challenge_metrics = {}
-
-            if challenge_metrics.get("halt_trading", False):
-                AUTO_TRADING_ENABLED = False
 
             # Load balance strictly from the database challenge status
             db_starting_bal = float(challenge_metrics.get("starting_balance", 200.00))
@@ -1455,8 +1491,7 @@ def broadcast_state_update():
                 print(f"Challenge metric evaluation error: {e}")
                 challenge_metrics = compounding_challenge.get_current_challenge_status()
 
-            if challenge_metrics.get("halt_trading", False):
-                AUTO_TRADING_ENABLED = False
+            CHALLENGE_HALTED = bool(challenge_metrics.get("halt_trading", False))
 
         symbol_states = {}
         profile = CURRENT_PROFILE
@@ -1536,13 +1571,14 @@ def broadcast_state_update():
             "mt5_account": mt5_account_data,
             "mt5_bridge": mt5_status,
             "live_trading_enabled": LIVE_TRADING_ENABLED,
-            "auto_trading_enabled": AUTO_TRADING_ENABLED,
+            "auto_trading_enabled": AUTO_TRADING_ENABLED and not CHALLENGE_HALTED,
             "max_risk_per_trade_percent": MAX_RISK_PER_TRADE_PERCENT,
             "max_open_positions": MAX_OPEN_POSITIONS,
             "challenge": challenge_metrics,
             "matrix": matrix_data
         }
 
+        latest_symbol_states = symbol_states
         default_state = symbol_states[DEFAULT_SYMBOL]
         for field in ("current_price", "signal", "cpr", "timeframes", "decision_audit"):
             state_data[field] = default_state[field]
@@ -1625,7 +1661,7 @@ class CustomHTTPRequestHandler(SimpleHTTPRequestHandler):
                     "cpr": {},
                     "decision_audit": empty_audit,
                     "live_trading_enabled": LIVE_TRADING_ENABLED,
-                    "auto_trading_enabled": AUTO_TRADING_ENABLED,
+                    "auto_trading_enabled": AUTO_TRADING_ENABLED and not CHALLENGE_HALTED,
                     "max_risk_per_trade_percent": MAX_RISK_PER_TRADE_PERCENT,
                     "max_open_positions": MAX_OPEN_POSITIONS,
                 })

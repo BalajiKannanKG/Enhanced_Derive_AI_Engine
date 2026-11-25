@@ -1309,7 +1309,7 @@ function evaluateConfluences(tf) {
         function updatePortfolioLockBadge(data) {
             const badge = document.getElementById('portfolio-lock-badge');
             if (!badge || !data) return;
-            const maxPosLimit = data.max_open_positions || 5;
+            const maxPosLimit = 1 //data.max_open_positions || 5;
             const total = effectivePositionCount(data);
             const pendingNote = pendingOrders.length > 0 ? ` (+${pendingOrders.length} pending)` : '';
             if (total >= maxPosLimit) {

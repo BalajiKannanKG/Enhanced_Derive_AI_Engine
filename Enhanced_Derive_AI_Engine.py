@@ -20,6 +20,7 @@ import MetaTrader5 as mt5  # <--- Ensure MetaTrader5 is explicitly imported here
 from mt5_bridge import MT5Bridge
 from websockets.sync.server import serve
 import compounding_challenge
+import trade_manager
 import time
 import random
 import base64
@@ -169,7 +170,9 @@ TRADING_PROFILES = {
         "min_consensus_score": 45,
         "min_adx": 22.0,
         "partial_scale_out_atr": 1.5,
-        "break_even_trigger_r": 1.0
+        "break_even_trigger_r": 1.0,
+        "trail_start_r": 1.5,
+        "trail_atr_mult": 1.5
     },
     "INTRADAY": {
         "primary_tf": "5m",
@@ -180,7 +183,9 @@ TRADING_PROFILES = {
         "min_consensus_score": 55,
         "min_adx": 25.0,
         "partial_scale_out_atr": 2.0,
-        "break_even_trigger_r": 1.0
+        "break_even_trigger_r": 1.0,
+        "trail_start_r": 1.5,
+        "trail_atr_mult": 2.0
     },
     "SWING": {
         "primary_tf": "h1",
@@ -191,7 +196,9 @@ TRADING_PROFILES = {
         "min_consensus_score": 65,
         "min_adx": 28.0,
         "partial_scale_out_atr": 3.0,
-        "break_even_trigger_r": 1.2
+        "break_even_trigger_r": 1.2,
+        "trail_start_r": 2.0,
+        "trail_atr_mult": 3.0
     }
 }
 
@@ -335,6 +342,14 @@ CHALLENGE_HALTED = False
 latest_symbol_states = {}     # per-symbol state from the latest broadcast; read by the auto-trading cycle
 scaled_out_positions = set()
 active_trade_evolution_logs: dict[int, list] = {}
+
+# Trade management (break-even + trailing stop; the rules live in trade_manager.py).
+TRADE_MANAGEMENT_ENABLED = True
+TRADE_MGMT_COOLDOWN_OK_SECONDS = 2.0        # after a stop was moved
+TRADE_MGMT_COOLDOWN_FAIL_SECONDS = 30.0     # after the broker refused a change: do not hammer it
+trade_management_last_attempt: dict[int, float] = {}
+trade_management_tp_removed: set[int] = set()
+trade_initial_risk_cache: dict[int, float] = {}
 
 def check_daily_loss_limit(account_state):
     """Daily loss limit check bypassed per user request."""
@@ -1194,151 +1209,149 @@ def check_and_auto_trigger_trade(agent_state, symbol: str = DEFAULT_SYMBOL):
         )
         print(f"[{ACTIVE_TRADING_STYLE} TRADE LOGGED] Ticket {ticket} | {action} {volume} lots on {symbol}")
 
-def manage_active_trades(agent_state):
-    """Advanced active trade manager utilizing profile scale-outs, stagnation cuts, and Chandelier Trailing Stops."""
-    if not LIVE_TRADING_ENABLED or not latest_mt5_status.get("trade_allowed"):
+def _initial_risk_distance(position):
+    """Distance from entry to the stop the trade was OPENED with: this is 1R, the unit all thresholds use.
+
+    Telemetry stores it for every trade the engine placed, so it survives restarts and later stop moves. If the
+    trade is unknown and its stop has not been moved yet, the current stop is the original one.
+    """
+    ticket = int(position["ticket"])
+    cached = trade_initial_risk_cache.get(ticket)
+    if cached:
+        return cached
+    risk = None
+    try:
+        conn = get_db_connection(DB_PATH)
+        try:
+            row = conn.execute(
+                "SELECT entry_price, sl_price FROM trade_telemetry WHERE ticket = ? ORDER BY id LIMIT 1", (ticket,)
+            ).fetchone()
+        finally:
+            conn.close()
+        if row and row[0] and row[1]:
+            risk = abs(float(row[0]) - float(row[1]))
+    except Exception:
+        risk = None
+    if not risk or risk <= 0:
+        entry, sl, side = float(position["price"]), float(position.get("sl") or 0.0), position["type"]
+        if sl > 0 and ((side == "BUY" and sl < entry) or (side == "SELL" and sl > entry)):
+            risk = abs(entry - sl)
+    if risk and risk > 0:
+        trade_initial_risk_cache[ticket] = risk
+        return risk
+    return None
+
+
+def _candles_since_entry(timeframes, open_time):
+    """Candles fine enough to find the best price since entry: the shortest timeframe whose history reaches back
+    to the entry, otherwise whichever reaches back furthest."""
+    fallback = None
+    for tf in ("1m", "3m", "5m", "15m", "30m", "h1"):
+        candles = (timeframes.get(tf) or {}).get("candles") or []
+        if not candles:
+            continue
+        first = candles[0].get("time")
+        if first is None:
+            continue
+        if float(first) <= float(open_time):
+            return candles
+        if fallback is None or float(first) < float(fallback[0].get("time")):
+            fallback = candles
+    return fallback or []
+
+
+def _broker_min_stop_distance(symbol):
+    """The closest a stop may sit to the market, from the broker's stops/freeze level."""
+    try:
+        info = mt5.symbol_info(symbol)
+        point = float(getattr(info, "point", 0.0) or 0.0)
+        level = max(float(getattr(info, "trade_stops_level", 0) or 0), float(getattr(info, "trade_freeze_level", 0) or 0))
+        return level * point
+    except Exception:
+        return 0.0
+
+
+def _manage_one_position(position, symbols, config):
+    if int(position.get("magic", 0)) != MT5_MAGIC_NUMBER:
         return
-
-    positions = agent_state.get("mt5_account", {}).get("positions", [])
-    if not positions:
+    symbol = position.get("symbol")
+    if symbol not in SUPPORTED_SYMBOLS:
         return
-
-    profile = CURRENT_PROFILE
-    primary_tf = profile["primary_tf"]
-    scale_threshold = profile["partial_scale_out_atr"]
-    stagnation_limit = profile["stagnation_seconds"]
-
-    # >>> CALL MODULE 4: MONITOR & CUT STAGNANT POSITIONS <<<
-    # This automatically evaluates trade age and profit bounds (-2.0 to 1.0)
-    # and dispatches closures for stalled positions via MetaTrader 5.
-    closed_tickets = monitor_and_cut_stagnant_positions(
-        mt5_connection=mt5_bridge, 
-        active_positions=positions, 
-        max_stagnation_seconds=stagnation_limit
+    ticket, side = int(position["ticket"]), position["type"]
+    timeframes = (symbols.get(symbol) or {}).get("timeframes") or {}
+    atr = float((timeframes.get(CURRENT_PROFILE["primary_tf"]) or {}).get("atr") or 0.0)
+    tick = mt5.symbol_info_tick(symbol)
+    if atr <= 0 or tick is None:
+        return
+    bid, ask = float(tick.bid), float(tick.ask)
+    risk = _initial_risk_distance(position) or atr * float(CURRENT_PROFILE["sl_atr_mult"])
+    open_time = position["time"]
+    best = trade_manager.best_price_since(
+        side, _candles_since_entry(timeframes, open_time), open_time, bid if side == "BUY" else ask
     )
+    decision = trade_manager.decide(
+        side, float(position["price"]), float(position.get("sl") or 0.0), float(position.get("tp") or 0.0),
+        atr, bid, ask, risk, best, config, min_stop_distance=_broker_min_stop_distance(symbol),
+    )
+    new_sl, new_tp = decision.new_sl, decision.new_tp
+    if new_tp is not None and ticket in trade_management_tp_removed:
+        new_tp = None                      # already removed once: respect a target the trader added back
+    if new_sl is None and new_tp is None:
+        return
+    now = time.time()
+    if now < trade_management_last_attempt.get(ticket, 0.0):
+        return
+    succeeded, message, _ = mt5_bridge.modify_position(
+        ticket,
+        new_sl if new_sl is not None else float(position.get("sl") or 0.0),
+        new_tp if new_tp is not None else float(position.get("tp") or 0.0),
+    )
+    if succeeded:
+        trade_management_last_attempt[ticket] = now + TRADE_MGMT_COOLDOWN_OK_SECONDS
+        if new_tp == 0.0:
+            trade_management_tp_removed.add(ticket)
+        active_trade_evolution_logs.setdefault(ticket, []).append(decision.reason)
+        print(f"[TRADE MGMT] #{ticket} {symbol} {side}: {decision.reason}")
+    else:
+        trade_management_last_attempt[ticket] = now + TRADE_MGMT_COOLDOWN_FAIL_SECONDS
+        print(f"[TRADE MGMT] #{ticket} {symbol}: the broker did not accept the stop change ({message}); retrying later.")
 
-    if closed_tickets:
-        for ticket in closed_tickets:
-            scaled_out_positions.discard(ticket)
-            close_time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-            mod_list = active_trade_evolution_logs.pop(ticket, ["Stagnation cut executed via trading_modules"])
-            print(f"[STAGNATION CUT] Closed stagnant trade ticket #{ticket}")
 
-    # Continue with remaining active position management (scale-outs, trailing stops, etc.)
-    for pos in positions:
-        ticket = int(pos["ticket"])
-        if ticket in closed_tickets:
-            continue
-        symbol = pos.get("symbol")
-        if symbol not in SUPPORTED_SYMBOLS or int(pos.get("magic", 0)) != MT5_MAGIC_NUMBER:
-            continue
+def manage_active_trades(agent_state):
+    """Break-even and trailing-stop management for open positions (rules in trade_manager.py).
 
-        symbol_state = agent_state.get("symbols", {}).get(symbol, {})
-        tf_data = symbol_state.get("timeframes", {}).get(primary_tf, {})
-        candles = tf_data.get("candles", [])
-        atr = float(tf_data.get("atr", 0.0))
-        atr_history = tf_data.get("atr_history", [atr])
-        avg_atr = sum(atr_history[-20:]) / len(atr_history[-20:]) if atr_history else atr
-        
-        ema20 = float(tf_data.get("ema20", 0.0))
-        rsi = float(tf_data.get("rsi", 50.0))
-        if not math.isfinite(atr) or atr <= 0:
-            continue
+    Losing trades are never closed early: only their original stop ends them, and it is never widened. Winners keep
+    their full size and, once trailing, lose their fixed target so the trail is the exit. Runs while live trading is
+    on, including when the engine is paused, because this only protects open trades.
+    """
+    if not TRADE_MANAGEMENT_ENABLED or not LIVE_TRADING_ENABLED or agent_status == "STOPPED":
+        return
+    positions = (agent_state.get("mt5_account") or {}).get("positions") or []
+    symbols = agent_state.get("symbols") or {}
+    open_tickets = {int(p["ticket"]) for p in positions if "ticket" in p}
+    for table in (trade_management_last_attempt, trade_initial_risk_cache):
+        for ticket in [t for t in table if t not in open_tickets]:
+            table.pop(ticket, None)
+    trade_management_tp_removed.intersection_update(open_tickets)
+    config = trade_manager.config_for_profile(CURRENT_PROFILE)
+    for position in positions:
+        try:
+            _manage_one_position(position, symbols, config)
+        except Exception as exc:
+            print(f"[TRADE MGMT ERROR] #{position.get('ticket')}: {exc}")
 
-        ticket = int(pos["ticket"])
-        if ticket not in active_trade_evolution_logs:
-            active_trade_evolution_logs[ticket] = []
 
-        pos_type = pos["type"]
-        entry_price = float(pos["price"])
-        current_sl = float(pos["sl"])
-        current_tp = float(pos["tp"])
-        current_volume = float(pos["volume"])
-        margin = float(pos.get("margin", 0.0))
-        
-        symbol_info_tick = getattr(mt5, "symbol_info_tick")
-        tick = symbol_info_tick(symbol)
-        if tick is None:
-            continue
+def run_trade_management_cycle():
+    """Manage open positions once per monitor-loop cycle. An error here never stops the loop."""
+    try:
+        with state_lock:
+            symbols = dict(latest_symbol_states)
+        with mt5_state_lock:
+            account = dict(latest_mt5_account or {})
+        manage_active_trades({"mt5_account": account, "symbols": symbols})
+    except Exception as exc:
+        print(f"[TRADE MGMT ERROR] {exc}")
 
-        market_price = float(tick.bid if pos_type == "BUY" else tick.ask)
-        profit_points = (
-            market_price - entry_price
-            if pos_type == "BUY"
-            else entry_price - market_price
-        )
-        
-        new_sl = None
-        new_tp = current_tp
-        evolution_action = None
-
-        if profit_points >= atr * scale_threshold and ticket not in scaled_out_positions and current_volume >= 0.02:
-            scale_out_volume = round(current_volume * 0.5, 2)
-            succeeded_so, _, _ = mt5_bridge.close_position(ticket, volume=scale_out_volume)
-            if succeeded_so:
-                scaled_out_positions.add(ticket)
-                mod_desc = f"Partial scale-out of {scale_out_volume} lots at {scale_threshold}x ATR profit."
-                active_trade_evolution_logs[ticket].append(mod_desc)
-                log_trade_event(
-                    ticket=ticket, symbol=symbol, trading_style=ACTIVE_TRADING_STYLE, timeframe=primary_tf, action=pos_type,
-                    regime="SCALE_OUT", score=0, strategies=[f"{ACTIVE_TRADING_STYLE} Scale-Out Rule"],
-                    modifications=[mod_desc], entry_price=entry_price, margin=margin,
-                    volume=scale_out_volume, atr=atr, sl=current_sl, tp=current_tp,
-                    partial_closures=[{"volume": scale_out_volume, "price": market_price}],
-                    status="PARTIAL_CLOSED"
-                )
-
-        if profit_points >= atr * 1.0 and (current_sl == 0.0 or (pos_type == "BUY" and current_sl < entry_price) or (pos_type == "SELL" and (current_sl > entry_price or current_sl == 0.0))):
-            new_sl = entry_price + (atr * 0.2 if pos_type == "BUY" else -atr * 0.2)
-            evolution_action = "Moved SL to Breakeven + 0.2 ATR buffer"
-        elif profit_points >= atr * 2.0 and len(candles) >= 5:
-            recent_highs = [c['high'] for c in candles[-5:]]
-            recent_lows = [c['low'] for c in candles[-5:]]
-            chandelier_mult = 1.5
-            
-            if pos_type == "BUY":
-                highest_high = max(recent_highs)
-                candidate_sl = highest_high - (atr * chandelier_mult)
-                if current_sl == 0.0 or candidate_sl > current_sl + (atr * 0.1):
-                    new_sl = candidate_sl
-                    evolution_action = f"Chandelier Trailing SL set to 1.5x ATR below 5-candle high ({highest_high:.3f})"
-            else:
-                lowest_low = min(recent_lows)
-                candidate_sl = lowest_low + (atr * chandelier_mult)
-                if current_sl == 0.0 or candidate_sl < current_sl - (atr * 0.1):
-                    new_sl = candidate_sl
-                    evolution_action = f"Chandelier Trailing SL set to 1.5x ATR above 5-candle low ({lowest_low:.3f})"
-
-        if new_sl is not None:
-            succeeded, _, _ = mt5_bridge.modify_position(ticket, new_sl, new_tp)
-            if succeeded and evolution_action:
-                active_trade_evolution_logs[ticket].append(evolution_action)
-            continue
-
-        opened_at = datetime.fromtimestamp(
-            int(pos["time"]), tz=datetime.now().astimezone().tzinfo
-        )
-        age_seconds = (datetime.now().astimezone() - opened_at).total_seconds()
-        
-        if age_seconds >= stagnation_limit and float(pos["profit"]) < 0 and ema20 > 0:
-            breached_structure = (
-                market_price < ema20 - atr * 0.5
-                if pos_type == "BUY"
-                else market_price > ema20 + atr * 0.5
-            )
-            if breached_structure or (pos_type == "BUY" and rsi < 42) or (pos_type == "SELL" and rsi > 58):
-                succeeded, _, _ = mt5_bridge.close_position(ticket)
-                if succeeded:
-                    scaled_out_positions.discard(ticket)
-                    close_time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-                    mod_list = active_trade_evolution_logs.pop(ticket, ["Stagnation cut executed"])
-                    log_trade_event(
-                        ticket=ticket, symbol=symbol, trading_style=ACTIVE_TRADING_STYLE, timeframe=primary_tf, action=pos_type,
-                        regime="STAGNATION_CUT", score=0, strategies=[f"{ACTIVE_TRADING_STYLE} Stagnation Rule"],
-                        modifications=mod_list, entry_price=entry_price, margin=margin,
-                        volume=current_volume, atr=atr, sl=current_sl, tp=current_tp,
-                        close_time=close_time_str, status="CLOSED_STAGNATION"
-                    )
 
 def refresh_mt5_state():
     global latest_mt5_account, latest_mt5_status
@@ -1385,6 +1398,7 @@ def mt5_monitor_loop():
         else:
             poll_mt5_market_data()
         run_auto_trading_cycle()
+        run_trade_management_cycle()
         time.sleep(1)
 def apply_mt5_tick(symbol: str, price: float, tick_epoch: int):
     global current_price
